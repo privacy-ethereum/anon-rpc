@@ -97,7 +97,11 @@ export interface KpsConn {
   close(reason?: KpsReason): Promise<void>
 
   /**
-   * Unreliable messaging
+   * Connection-level unreliable datagrams.
+   *
+   * Always present: every connection supports datagrams, so worker code does
+   * not need to feature-detect. Datagrams are separate from streams —
+   * unreliable, unordered, message-oriented, and size-limited.
    */
   readonly datagrams: KpsDatagrams
 
@@ -197,7 +201,7 @@ export interface KpsStreamCloseInfo {
   reason?: KpsReason
 }
 
-interface KpsDatagrams {
+export interface KpsDatagrams {
   /** Maximum payload size currently allowed for one datagram. May be conservative; larger sends must fail. */
   readonly maxSize: number
 
