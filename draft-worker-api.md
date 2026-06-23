@@ -1,4 +1,4 @@
-# anon-rpc Worker Capability API Draft
+# anon-rpc Worker API Draft
 
 The sandboxed WebWorker (inside null origin iframe) communicates with the wallet via messaging.
 
@@ -25,14 +25,15 @@ addEventListener('message', ev => {
 ```ts
 // after
 
-anonRpc.on('fetchCall', fetchCall => {
-  const responsePromise = anonymousFetch(
-    fetchCall.url,
-    fetchCall.requestInit,
-  );
+while (true) {
+  const call = await anonRpc.acceptCall();
 
-  fetchCall.resolve(responsePromise);
-});
+  switch (call.kind) {
+    case 'fetch':
+      call.respond(anonymousFetch(call.url, call.requestInit));
+      break;
+  }
+}
 ```
 
 This API will include some important capabilities too:
@@ -46,10 +47,102 @@ By including `kps`, we remove the temptation to place the network client in an i
 ## Type definitions
 
 ```ts
-export interface AnonRpcWorkerCapabilities {
+export interface AnonRpcWorkerApi {
+  acceptCall(opts?: { signal?: AbortSignal }): Promise<IncomingCall>
   readonly kps: KpsApi
   readonly storage: StorageApi
   readonly log: LogApi
+}
+
+/**
+ * A call made by the wallet/host into the worker. Discriminated by `kind` so
+ * new call kinds can be added without growing the accept surface.
+ */
+export type IncomingCall =
+  | FetchCall
+// future call kinds are added here
+
+export interface FetchCall {
+  readonly kind: "fetch"
+
+  /**
+   * The request URL. Separated from `requestInit` to mirror `fetch(url, init)`.
+   */
+  readonly url: string
+
+  /**
+   * The rest of the request. Shaped like a DOM `RequestInit` but portable
+   * across non-web harnesses (`HeaderList` headers, `ByteBody` body), and
+   * carries the cancellation `signal` like `fetch(url, init)` does.
+   */
+  readonly requestInit?: AnonRequestInit
+
+  /**
+   * Deliver the response exactly once. A rejected promise fails the call.
+   */
+  respond(response: AnonFetchResponse | Promise<AnonFetchResponse>): void
+}
+
+/**
+ * An ordered list of header name/value pairs.
+ * Order and duplicates are preserved.
+ */
+export type HeaderList = ReadonlyArray<readonly [name: string, value: string]>
+
+/**
+ * A request or response body.
+ *
+ * Either a complete byte buffer, or a stream of byte chunks for large or
+ * incremental transfers. Streaming bodies use the same
+ * `ReadableStream<Uint8Array>` shape as `KpsStream.readable`: they are
+ * single-consumption, apply normal backpressure, and error if the underlying
+ * transfer fails or the call is aborted via the request's `signal`.
+ */
+export type ByteBody = Uint8Array | ReadableStream<Uint8Array>
+
+export interface AnonRequestInit {
+  /** HTTP method. Defaults to "GET". */
+  readonly method?: string
+
+  /** Request headers. */
+  readonly headers?: HeaderList
+
+  /**
+   * Request body, or undefined for bodyless methods. A streaming body is read
+   * by the worker as it performs the request.
+   */
+  readonly body?: ByteBody
+
+  /**
+   * Redirect handling. "follow" resolves to the final response; "manual"
+   * returns the redirect response as-is; "error" fails the call on a redirect.
+   * Defaults to "follow".
+   */
+  readonly redirect?: "follow" | "manual" | "error"
+
+  /**
+   * Aborted when the wallet cancels this in-flight call, like `fetch`'s
+   * `signal`. A call is only cancellable when the wallet supplies one.
+   */
+  readonly signal?: AbortSignal
+}
+
+export interface AnonFetchResponse {
+  /** HTTP status code. */
+  readonly status: number
+
+  /** Response headers. */
+  readonly headers: HeaderList
+
+  /**
+   * Response body. May be a streaming body that the wallet drains as bytes
+   * arrive; the call is not complete until the body is fully read or errors.
+   * Empty (zero-length) for bodyless responses.
+   */
+  readonly body: ByteBody
+
+  /** Final URL after any followed redirects (useful when redirect was "follow"). */
+  readonly url?: string
 }
 
 /* KPS */
