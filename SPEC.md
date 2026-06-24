@@ -14,13 +14,13 @@ A wallet that wants to read from or write to a chain must reach an RPC endpoint.
 
 This specification covers the full system:
 
-- how anon-client worker code is identified, located, and integrity-checked (§5);
-- how a host bootstraps and integrates an anon-client (§6);
-- the isolation properties a worker runs under (§7);
-- the **worker capability API** the worker is granted: inbound calls, KPS transport, storage, and logging (§8–§14);
-- the error model (§13) and security considerations (§15).
+- how anon-client worker code is identified, located, and integrity-checked (§4);
+- how a host bootstraps and integrates an anon-client (§5);
+- the isolation properties a worker runs under (§6);
+- the **worker capability API** the worker is granted: inbound calls, KPS transport, storage, and logging (§7–§13);
+- the error model (§12) and security considerations (§14).
 
-The KPS wire protocol itself is **out of scope** and is defined by the KPS project (see §16). This document specifies only the worker-facing KPS API and the harness obligations behind it.
+The KPS wire protocol itself is **out of scope** and is defined by the KPS project (see §15). This document specifies only the worker-facing KPS API and the harness obligations behind it.
 
 ## 2. Terminology
 
@@ -29,9 +29,9 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 - **Worker** — the anon-client program, distributed as a bundle of bytes, that performs anonymized requests. It is the conformance target of §3.2.
 - **Harness** — the runtime that loads a worker, enforces its isolation, and implements the capability API the worker is granted. It is the conformance target of §3.1. A *browser harness* runs the worker in a Web Worker inside a null-origin iframe.
 - **Host** — the wallet or application that integrates a harness and consumes the anonymized `fetch` it produces.
-- **Specifier Contract** — an on-chain definition (an `IWorkerSpecifier`, §5) that specifies a worker bundle by hash and where to obtain it.
-- **Capability API** — the object exposed to worker code as its entire platform interface (`AnonRpcWorkerApi`, §8).
-- **KPS** — Key Pinned Streams: secure multiplexed byte streams to a peer identified by a certificate hash rather than a CA-signed domain (§11).
+- **Specifier Contract** — an on-chain definition (an `IWorkerSpecifier`, §4) that specifies a worker bundle by hash and where to obtain it.
+- **Capability API** — the object exposed to worker code as its entire platform interface (`AnonRpcWorkerApi`, §7).
+- **KPS** — Key Pinned Streams: secure multiplexed byte streams to a peer identified by a certificate hash rather than a CA-signed domain (§10).
 - **Call** — a request made by the host *into* the worker (e.g. a `fetch` call), as opposed to a capability the worker invokes.
 
 ## 3. Conformance classes
@@ -40,11 +40,11 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 A conforming harness MUST:
 
-- verify worker-bundle integrity before execution as specified in §5;
-- implement `AnonRpcWorker` for the host (using the same name) (§6);
-- enforce the worker isolation properties of §7;
-- implement `AnonRpcWorkerApi` for the worker under the name `anonRpcWorker` (§8);
-- implement the semantics of every capability it exposes as specified in §8–§12.
+- verify worker-bundle integrity before execution as specified in §4;
+- implement `AnonRpcWorker` for the host (using the same name) (§5);
+- enforce the worker isolation properties of §6;
+- implement `AnonRpcWorkerApi` for the worker under the name `anonRpcWorker` (§7);
+- implement the semantics of every capability it exposes as specified in §7–§11.
 
 ### 3.2 Conforming worker
 
@@ -55,23 +55,17 @@ A conforming worker MUST:
   - providing general web request access OR
   - serve ethereum RPC at a nominated special url such as `/ethereum-rpc`.
 
-The worker SHOULD minimize its usage of ambient APIs other than the capability API (§8). Usage of other APIs will prevent the worker from functioning on platforms which do not provide them.
+The worker SHOULD minimize its usage of ambient APIs other than the capability API (§7). Usage of other APIs will prevent the worker from functioning on platforms which do not provide them.
 
 A conforming worker MUST NOT depend on the messaging protocol used to implement the capability API.
 
 ### 3.3 Secondary roles
 
-A **Specifier Contract** MUST conform to §5.
+A **Specifier Contract** MUST conform to §4.
 
-## 4. Admitted web-platform types
+## 4. Worker identity and integrity
 
-To keep workers idiomatic without coupling them to a browser, this specification admits exactly three web-platform types into the capability API: `ReadableStream<Uint8Array>`, `WritableStream<Uint8Array>`, and `AbortSignal`. A conforming worker MUST NOT assume any other web-platform global. A native harness MUST provide conforming implementations of these three types to the worker.
-
-All bytes crossing the capability API are `Uint8Array`. The API is binary-first; the worker is responsible for its own text encoding, framing, and serialization.
-
-## 5. Worker identity and integrity
-
-> The contents of §5–§6 are derived from the anon-rpc proposal article (§16).
+> The contents of §4–§5 are derived from the anon-rpc proposal article (§15).
 
 A worker bundle MUST be identified by content hash, not by location. A specifier contract is an on-chain object exposing at least:
 
@@ -88,7 +82,7 @@ A harness MAY obtain the bundle bytes by any means. Any bytes matching the hash 
 
 If the bundle hash does not equal `workerHash()`, the harness MUST reject it.
 
-## 6. Host-side harness API
+## 5. Host-side harness API
 
 The harness code MUST implement `AnonRpcWorker` for the host:
 
@@ -123,7 +117,7 @@ export type WorkerInit = {
 };
 ```
 
-## 7. Worker isolation
+## 6. Worker isolation
 
 A conforming harness MUST run the worker such that it has no ambient access to:
 
@@ -133,7 +127,7 @@ A conforming harness MUST run the worker such that it has no ambient access to:
 
 A browser harness MUST run the worker in a Web Worker whose owning context is a null-origin (sandboxed, `allow-scripts` only) iframe, and MUST mediate all capability traffic across the `postMessage` boundary.
 
-## 8. The capability API
+## 7. The capability API
 
 The harness MUST implement `AnonRpcWorkerApi` for the worker:
 
@@ -153,7 +147,7 @@ The worker MUST call `signalReady()` when it is ready to fulfil fetch calls.
 
 The worker MAY accept calls to fetch before it calls `signalReady()`. The harness MUST buffer incoming calls so that this is not necessary.
 
-## 9. Inbound calls
+## 8. Inbound calls
 
 ```ts
 export type IncomingCall =
@@ -168,15 +162,15 @@ export type FetchCall = {
 };
 ```
 
-- `acceptCall()` MUST resolve with the next inbound call and MUST NOT deliver a subsequent call until it is invoked again. Backpressure is therefore implicit: the harness MUST NOT drop or reorder calls while the worker has not asked for the next one; it MUST queue them in arrival order. (This mirrors `KpsConn.acceptStream`, §11.)
+- `acceptCall()` MUST resolve with the next inbound call and MUST NOT deliver a subsequent call until it is invoked again. Backpressure is therefore implicit: the harness MUST NOT drop or reorder calls while the worker has not asked for the next one; it MUST queue them in arrival order. (This mirrors `KpsConn.acceptStream`, §10.)
 - Calls MUST be delivered in the order the host issued them.
 - If the `opts.signal` passed to `acceptCall()` aborts, the pending `acceptCall()` MUST reject with an abort error and MUST NOT consume a call.
 - `respond()` MUST be called at most once per call. A second invocation MUST throw. Passing a rejected promise (or a promise that rejects) MUST fail the call and propagate failure to the host.
 - New call kinds MUST be added as new members of the `IncomingCall` union with a distinct `kind`; a worker MUST ignore (and MUST NOT crash on) a `kind` it does not recognize, leaving such a call unanswered or explicitly failed.
 
-## 10. Fetch call payloads
+## 9. Fetch call payloads
 
-### 10.1 Requests
+### 9.1 Requests
 
 ```ts
 export type HeaderList = [name: string, value: string][];
@@ -196,7 +190,7 @@ export type AnonRequestInit = {
 - A `ByteBody` that is a `ReadableStream<Uint8Array>` is single-consumption, applies normal stream backpressure, and MUST error if the underlying transfer fails or `signal` aborts.
 - `signal`, when supplied, aborts the in-flight call (as in `fetch(url, { signal })`).
 
-### 10.2 Responses
+### 9.2 Responses
 
 ```ts
 export type AnonFetchResponse = {
@@ -209,7 +203,7 @@ export type AnonFetchResponse = {
 
 - When `body` is a streaming `ByteBody`, the call is **not complete** until the body stream closes or errors; `respond()` returning does not mark completion. A harness MUST keep the transfer alive until the body is fully drained or aborted.
 
-## 11. KPS transport
+## 10. KPS transport
 
 KPS provides secure, multiplexed byte streams to a peer identified by a certificate hash. The worker-facing API is connection-first.
 
@@ -226,7 +220,7 @@ export type KpsApi = {
 - `dial()` MUST establish a secure multiplexed connection. `openStream(addr)` is convenience sugar similar to `dial(addr).then(c => c.openStream())`, but also closes the underlying connection when the stream is closed.
 - A harness MAY implement KPS over WebRTC (browser) or QUIC (native). The worker SHOULD NOT be affected by the underlying transport.
 
-### 11.1 Connections
+### 10.1 Connections
 
 ```ts
 export type KpsConn = {
@@ -238,11 +232,11 @@ export type KpsConn = {
 };
 ```
 
-- `acceptStream()` accepts a stream opened by the peer, following the same one-at-a-time, ordered, no-drop discipline as `acceptCall` (§9).
+- `acceptStream()` accepts a stream opened by the peer, following the same one-at-a-time, ordered, no-drop discipline as `acceptCall` (§8).
 - `datagrams` MUST always be present: every connection supports datagrams, so a worker need not feature-detect.
 - `close()` MUST invalidate all streams and datagram operations on the connection. `closed` MUST resolve (not reject) on orderly or failed shutdown, carrying `KpsConnCloseInfo`.
 
-### 11.2 Streams
+### 10.2 Streams
 
 A KPS stream is an unnamed, reliable, ordered, bidirectional byte stream. Write boundaries are **not** preserved: if one side writes `hello` then `world`, the peer observes the bytes `helloworld` in arbitrary chunking. Application protocols, routing, framing, and request/response semantics are the worker's responsibility, layered on top of the stream bytes.
 
@@ -267,7 +261,7 @@ The lifecycle is QUIC-inspired but is not a QUIC API mapping:
 
 A harness MUST NOT expose stream IDs, connection IDs, QUIC transport parameters, 0-RTT, connection migration, version negotiation, or detailed flow-control knobs.
 
-### 11.3 Datagrams
+### 10.3 Datagrams
 
 ```ts
 export type KpsDatagrams = {
@@ -281,7 +275,7 @@ Datagrams are connection-level, unreliable, unordered, message-oriented, and siz
 - `send()` resolving means the harness accepted the datagram for best-effort sending, not that the peer received it.
 - `incoming` MUST be delivered against a bounded buffer with a defined overflow policy (for example, drop-oldest); a harness MUST NOT rely on a single racing receive call.
 
-## 12. Storage
+## 11. Storage
 
 ```ts
 export type StorageKey = string;
@@ -303,7 +297,7 @@ Storage is asynchronous and binary-first.
 - Keys are plain strings with no harness-imposed structure. A worker MAY adopt a delimiter convention (e.g. `"/"`) and use it with the `prefix` option of `list()` and `clear()`.
 - `list()` is async-iterable so a harness MAY page internally. `clear({ prefix })` MUST remove only matching keys; `clear()` with no prefix MUST clear the worker's entire namespace and nothing outside it.
 
-## 13. Error model
+## 12. Error model
 
 - Operation failures surface as rejected promises, and as errors on the relevant `readable`/`writable` streams.
 - Where a structured reason is available it MUST carry a `KpsErrorCode` and MAY carry a human-readable `message`. `message` is diagnostic and MUST NOT be parsed for control flow.
@@ -321,7 +315,7 @@ export type KpsStreamCloseInfo = { ok: boolean; reason?: KpsReason };
 
 - The `closed` promises on connections and streams MUST resolve (not reject) so that orderly shutdown is observable distinctly from operation failure; `ok` indicates whether shutdown was clean.
 
-## 14. Logging
+## 13. Logging
 
 ```ts
 export type LogApi = {
@@ -343,14 +337,14 @@ The log API is console-like but does not promise browser `console` semantics.
 - Log calls are best-effort diagnostics. A worker's correctness MUST NOT depend on log delivery, ordering, formatting, or side effects.
 - Arguments MUST be treated as serialized or snapshotted at call time. A worker MUST NOT assume object identity, prototypes, getters, stack capture, or live inspection.
 
-## 15. Security considerations
+## 14. Security considerations
 
-- The isolation in §7 is load-bearing: a compromised worker bundle must not be able to exfiltrate wallet secrets or browser state. Harness authors MUST treat worker code as untrusted.
-- Hash pinning (§5) is the supply-chain control. A host that executes bytes without verifying `workerHash()` voids the security model.
-- Because KPS pins peers by certificate hash (§11), trust derives from the pinned hash, not from CA/DNS; the source distributing an address is untrusted.
-- Log arguments may carry sensitive bytes; §14 permits redaction precisely so harnesses can avoid leaking secrets into host logs.
+- The isolation in §6 is load-bearing: a compromised worker bundle must not be able to exfiltrate wallet secrets or browser state. Harness authors MUST treat worker code as untrusted.
+- Hash pinning (§4) is the supply-chain control. A host that executes bytes without verifying `workerHash()` voids the security model.
+- Because KPS pins peers by certificate hash (§10), trust derives from the pinned hash, not from CA/DNS; the source distributing an address is untrusted.
+- Log arguments may carry sensitive bytes; §13 permits redaction precisely so harnesses can avoid leaking secrets into host logs.
 
-## 16. References
+## 15. References
 
 - anon-rpc proposal article: https://privreads.ethereum.foundation/feed/anon-rpc/
 - KPS (Key Pinned Streams): https://github.com/voltrevo/kps — see its `SPEC.md` for the wire protocol.
