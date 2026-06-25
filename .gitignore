@@ -1,6 +1,6 @@
 node_modules/
 dist/
-test/.tmp/
-test/.tmp-*
+.tmp/
+.tmp-*
 *.log
 *.key

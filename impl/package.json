@@ -10,7 +10,7 @@
     "test:e2e": "node test/run-e2e.mjs"
   },
   "dependencies": {
-    "@kps/client": "file:../kps/libs/js",
+    "@kps/client": "file:../../kps/libs/js",
     "@noble/hashes": "^1.5.0"
   },
   "devDependencies": {
