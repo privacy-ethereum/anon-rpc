@@ -1,5 +1,4 @@
-// Builds the four execution contexts of the prototype:
-//   - demo-worker.js   IIFE  : untrusted, hash-pinned worker bundle (§4 artifact)
+// Builds the harness's three execution contexts:
 //   - worker-runtime.js IIFE : harness code that runs as the Web Worker script
 //   - iframe-boot.js   IIFE  : harness code that runs in the null-origin iframe
 //   - host.js          ESM   : the AnonRpcWorker host API (imported by the page)
@@ -27,7 +26,6 @@ async function buildOne(entry, outfile, format) {
 }
 
 // Standalone bundles.
-await buildOne("src/demo-worker/demo-worker.ts", `${outdir}/demo-worker.js`, "iife");
 const runtimeSrc = await buildOne("src/worker/worker-runtime.ts", `${outdir}/worker-runtime.js`, "iife");
 const iframeSrc = await buildOne("src/iframe/iframe-boot.ts", `${outdir}/iframe-boot.js`, "iife");
 

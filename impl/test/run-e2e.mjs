@@ -2,7 +2,7 @@
 //
 // Pipeline:
 //   1. build the bundles
-//   2. compute the demo bundle's keccak hash and ABI-encode a mock specifier
+//   2. compute the worker bundle's keccak hash and ABI-encode a mock specifier
 //      (workerHash() / workerResolvers()) so the §4 path runs for real
 //   3. start the Go kps echo server, capture its ip:port:certhash address
 //   4. serve the page + dist assets + a /hello passthrough endpoint
@@ -73,12 +73,14 @@ function encodeStringArray(strings) {
 }
 
 async function main() {
-  // 1. build
-  await run("node", ["build.mjs"], { cwd: ROOT });
+  // 1. build both workspaces
+  await run("npm", ["run", "build"], { cwd: ROOT });
 
   // 2. hash + mock specifier
-  const demoBytes = new Uint8Array(await readFile(`${ROOT}dist/demo-worker.js`));
-  const workerHash = "0x" + toHex(keccak_256(demoBytes));
+  const workerBytes = new Uint8Array(
+    await readFile(`${ROOT}passthrough-worker/dist/passthrough-worker.js`),
+  );
+  const workerHash = "0x" + toHex(keccak_256(workerBytes));
 
   // 3. kps echo server
   const kpsAddr = await startKpsServer();
@@ -148,15 +150,15 @@ async function main() {
   /* helpers bound to closure */
 
   async function startHttpServer({ workerHash }) {
-    const hostBundle = await readFile(`${ROOT}dist/host.js`);
-    const demoBundle = await readFile(`${ROOT}dist/demo-worker.js`);
+    const hostBundle = await readFile(`${ROOT}harness/dist/host.js`);
+    const workerBundle = await readFile(`${ROOT}passthrough-worker/dist/passthrough-worker.js`);
     const page = await readFile(`${HERE}page.html`);
 
     const server = createServer(async (req, res) => {
       const url = req.url.split("?")[0];
       if (url === "/") return send(res, 200, "text/html", page);
       if (url === "/dist/host.js") return send(res, 200, "text/javascript", hostBundle);
-      if (url === "/dist/demo-worker.js") return send(res, 200, "text/javascript", demoBundle);
+      if (url === "/dist/passthrough-worker.js") return send(res, 200, "text/javascript", workerBundle);
       if (url === "/hello") return send(res, 200, "text/plain", `hello from ${originRef.value}`);
       send(res, 404, "text/plain", "not found");
     });
@@ -166,7 +168,7 @@ async function main() {
     const origin = `http://127.0.0.1:${port}`;
     originRef.value = origin;
 
-    const resolvers = [`${origin}/dist/demo-worker.js`];
+    const resolvers = [`${origin}/dist/passthrough-worker.js`];
     const ethCallMap = {
       [selector("workerHash()")]: workerHash,
       [selector("workerResolvers()")]: "0x" + toHex(encodeStringArray(resolvers)),

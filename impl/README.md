@@ -1,6 +1,13 @@
 # anon-rpc prototype
 
-A working prototype of the [anon-rpc](../SPEC.md) harness and a conforming worker.
+A working prototype of the [anon-rpc](../SPEC.md) harness and a conforming
+worker, as two npm workspaces:
+
+- [harness/](harness/) — the wallet-side runtime (the §3.1 conformance target).
+- [passthrough-worker/](passthrough-worker/) — a template worker (the §3.2
+  conformance target). **Copy that directory to write your own anon-client**;
+  it deliberately copies the worker-facing spec types instead of importing
+  them, so it stands alone.
 It runs untrusted, hash-pinned worker code inside a Web Worker in a null-origin
 sandboxed iframe (§6), and exposes the `AnonRpcWorkerApi` capability surface
 (§7–§13) across the `postMessage` boundary — including a **real KPS transport**
@@ -21,13 +28,14 @@ from the host to the worker.
                                           │    worker-runtime (harness): builds
         MessageChannel port ──────────────┼──▶  anonRpcWorker, importScripts the
         (relayed once through the iframe,  │     verified bundle
-         then host↔worker direct)         │    demo-worker (untrusted, hash-pinned):
-                                          │     acceptCall loop, fetch passthrough,
-                                          │     kps+echo:// routing
+         then host↔worker direct)         │    passthrough-worker (untrusted,
+                                          │     hash-pinned): acceptCall loop,
+                                          │     fetch passthrough, kps+echo://
+                                          │     routing
 ```
 
 The capability port carries a small request/response + event RPC
-([src/protocol.ts](src/protocol.ts)). KPS stream byte flow rides **transferred**
+([harness/src/protocol.ts](harness/src/protocol.ts)). KPS stream byte flow rides **transferred**
 WHATWG `ReadableStream`/`WritableStream` objects (Chromium transfers them over a
 `MessagePort`), so backpressure is handled by the platform pipe and only
 lifecycle calls (`closeWrite`, `cancelRead`, …) round-trip as RPC. This is why
@@ -37,15 +45,15 @@ the worker never needs WebRTC itself — the harness owns the transport.
 
 | File | Role |
 | --- | --- |
-| [src/spec-types.ts](src/spec-types.ts) | Spec type surface (§5, §7–§13) |
-| [src/protocol.ts](src/protocol.ts) | `PortRpc`: request/response + events + transfer + cross-boundary abort |
-| [src/host/AnonRpcWorker.ts](src/host/AnonRpcWorker.ts) | Host class (§5): boot, iframe, fetch/acceptCall queue, storage, log |
-| [src/host/specifier.ts](src/host/specifier.ts) | §4: specifier read (eth_call + ABI decode) + keccak verify |
-| [src/host/kps-bridge-host.ts](src/host/kps-bridge-host.ts) | Host side of KPS, using real `@kpstreams/webrtc-client` |
-| [src/iframe/iframe-boot.ts](src/iframe/iframe-boot.ts) | Null-origin iframe: spawns worker, relays port |
-| [src/worker/worker-runtime.ts](src/worker/worker-runtime.ts) | Harness code in the Worker: builds `anonRpcWorker`, loads bundle |
-| [src/worker/anon-rpc-worker-api.ts](src/worker/anon-rpc-worker-api.ts) | Worker-side capability proxies |
-| [src/demo-worker/demo-worker.ts](src/demo-worker/demo-worker.ts) | The §3.2 conforming worker bundle |
+| [harness/src/spec-types.ts](harness/src/spec-types.ts) | Spec type surface (§5, §7–§13) |
+| [harness/src/protocol.ts](harness/src/protocol.ts) | `PortRpc`: request/response + events + transfer + cross-boundary abort |
+| [harness/src/host/AnonRpcWorker.ts](harness/src/host/AnonRpcWorker.ts) | Host class (§5): boot, iframe, fetch/acceptCall queue, storage, log |
+| [harness/src/host/specifier.ts](harness/src/host/specifier.ts) | §4: specifier read (eth_call + ABI decode) + keccak verify |
+| [harness/src/host/kps-bridge-host.ts](harness/src/host/kps-bridge-host.ts) | Host side of KPS, using real `@kpstreams/webrtc-client` |
+| [harness/src/iframe/iframe-boot.ts](harness/src/iframe/iframe-boot.ts) | Null-origin iframe: spawns worker, relays port |
+| [harness/src/worker/worker-runtime.ts](harness/src/worker/worker-runtime.ts) | Harness code in the Worker: builds `anonRpcWorker`, loads bundle |
+| [harness/src/worker/anon-rpc-worker-api.ts](harness/src/worker/anon-rpc-worker-api.ts) | Worker-side capability proxies |
+| [passthrough-worker/src/passthrough-worker.ts](passthrough-worker/src/passthrough-worker.ts) | The §3.2 conforming worker template (own copy of the worker-facing types) |
 
 ## Prerequisites
 
@@ -60,9 +68,9 @@ All commands below are run from this `impl/` directory.
 ## Build & test
 
 ```sh
-npm install
-npm run build          # esbuild → dist/{host,worker-runtime,iframe-boot,demo-worker}.js
-npm run typecheck      # tsc --noEmit
+npm install            # installs both workspaces
+npm run build          # harness/dist/{host,worker-runtime,iframe-boot}.js + passthrough-worker/dist/passthrough-worker.js
+npm run typecheck      # tsc --noEmit in each workspace
 npm run test:e2e       # builds, starts the Go kps echo server, drives headless Chromium
 ```
 

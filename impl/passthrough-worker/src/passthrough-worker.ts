@@ -1,9 +1,10 @@
-// Demo anon-client worker bundle (the §3.2 conformance target, hash-pinned).
+// The passthrough worker: a template anon-client (the §3.2 conformance target,
+// hash-pinned). Copy this directory to start your own.
 //
 // This is untrusted third-party code from the harness's point of view: its only
 // platform is the global `anonRpcWorker` capability object (§7) plus the
-// ambient `fetch` the worker environment happens to provide. It does NOT import
-// anything — it is bundled to a standalone IIFE whose bytes are hashed (§4).
+// ambient `fetch` the worker environment happens to provide. It imports nothing
+// at runtime — it is bundled to a standalone IIFE whose bytes are hashed (§4).
 //
 // Behaviour:
 //   - `kps+echo://<ip>:<port>:<certhash>` URLs are routed over a real KPS stream
@@ -18,7 +19,7 @@ import type {
   AnonRequestInit,
   ByteBody,
   HeaderList,
-} from "../spec-types.js";
+} from "./spec-types.js";
 
 declare const anonRpcWorker: AnonRpcWorkerApi;
 
@@ -26,7 +27,7 @@ const KPS_ECHO_PREFIX = "kps+echo://";
 
 (async () => {
   const { log } = anonRpcWorker;
-  log.info("demo-worker starting");
+  log.info("passthrough-worker starting");
   anonRpcWorker.signalReady();
 
   for (;;) {

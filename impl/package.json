@@ -1,21 +1,20 @@
 {
-  "name": "anon-rpc-prototype",
+  "name": "anon-rpc-impl",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Prototype harness + worker for the anon-rpc proposed standard (see SPEC.md).",
+  "description": "anon-rpc reference prototype: harness + passthrough worker (see ../SPEC.md).",
+  "workspaces": [
+    "harness",
+    "passthrough-worker"
+  ],
   "scripts": {
-    "build": "node build.mjs",
-    "typecheck": "tsc --noEmit",
+    "build": "npm run build --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
     "test:e2e": "node test/run-e2e.mjs"
   },
-  "dependencies": {
-    "@kpstreams/webrtc-client": "^0.1.0",
-    "@noble/hashes": "^1.5.0"
-  },
   "devDependencies": {
-    "esbuild": "^0.24.0",
-    "playwright": "^1.48.0",
-    "typescript": "^5.6.0"
+    "@noble/hashes": "^1.5.0",
+    "playwright": "^1.48.0"
   }
 }
