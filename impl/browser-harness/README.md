@@ -13,7 +13,8 @@ The harness:
   ambient access to your DOM, storage, cookies, or keys;
 - grants it a small, explicit capability API — inbound fetch calls, a
   [KPS](https://github.com/privacy-ethereum/kps) key-pinned transport
-  (bridged so the worker never touches WebRTC), scoped storage, and logging;
+  (bridged so the worker never touches WebRTC), persistent storage
+  (IndexedDB on the host origin, namespaced per specifier), and logging;
 - hands you back one thing: an anonymized `fetch`.
 
 ## Install

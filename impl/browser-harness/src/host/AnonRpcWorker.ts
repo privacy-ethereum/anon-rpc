@@ -10,20 +10,12 @@ import { readSpecifier, fetchAndVerifyBundle } from "./specifier.js";
 import { registerKpsBridge } from "./kps-bridge-host.js";
 import { CallQueue } from "./call-queue.js";
 import { normalizeRequest, type WireRequestInit } from "./normalize-request.js";
+import { openStorageBackend, type StorageBackend } from "./idb-storage.js";
 
 // Injected at build time (see build.mjs): source text the null-origin iframe
 // blob-spawns, since an opaque-origin iframe cannot load host-origin scripts.
 declare const __WORKER_RUNTIME_SRC__: string;
 declare const __IFRAME_BOOT_SRC__: string;
-
-// Storage namespaces, scoped by specifier address (§11). In-memory for the
-// prototype; a real harness would back this with persistent storage.
-const STORE = new Map<string, Map<string, Uint8Array>>();
-function storeFor(address: string): Map<string, Uint8Array> {
-  let m = STORE.get(address);
-  if (!m) STORE.set(address, (m = new Map()));
-  return m;
-}
 
 type CallRecord = {
   callId: number;
@@ -55,6 +47,8 @@ export class AnonRpcWorker {
   // Set on fatal failure (boot failure, worker crash, close): everything
   // pending is rejected with it and future fetches fail fast.
   #failure?: unknown;
+  // §11 storage backend (IndexedDB; memory fallback), opened on first use.
+  #storage?: Promise<StorageBackend>;
 
   constructor(init: WorkerInit) {
     this.#init = init;
@@ -191,23 +185,25 @@ export class AnonRpcWorker {
       return { value: undefined };
     });
 
-    const store = storeFor(this.#init.address);
-    rpc.on("storage.get", async ({ key }) => ({ value: store.get(key) }));
+    // §11: scoped to the specifier address (normalized, so checksum-cased and
+    // lowercased forms of one address share a namespace).
+    const addr = this.#init.address.toLowerCase();
+    const store = () => (this.#storage ??= openStorageBackend());
+    rpc.on("storage.get", async ({ key }) => ({ value: await (await store()).get(addr, key) }));
     rpc.on("storage.set", async ({ key, value }) => {
-      store.set(key, value);
+      await (await store()).set(addr, key, value);
       return { value: undefined };
     });
     rpc.on("storage.delete", async ({ key }) => {
-      store.delete(key);
+      await (await store()).delete(addr, key);
       return { value: undefined };
     });
-    rpc.on("storage.has", async ({ key }) => ({ value: store.has(key) }));
+    rpc.on("storage.has", async ({ key }) => ({ value: await (await store()).has(addr, key) }));
     rpc.on("storage.list", async ({ prefix }: { prefix?: string }) => ({
-      value: [...store.keys()].filter((k) => !prefix || k.startsWith(prefix)),
+      value: await (await store()).listKeys(addr, prefix),
     }));
     rpc.on("storage.clear", async ({ prefix }: { prefix?: string }) => {
-      if (!prefix) store.clear();
-      else for (const k of [...store.keys()]) if (k.startsWith(prefix)) store.delete(k);
+      await (await store()).clear(addr, prefix);
       return { value: undefined };
     });
   }

@@ -12,6 +12,10 @@
 //     bytes are read back, and returned as the response.
 //   - every other URL is fulfilled by a plain `fetch` passthrough — the single
 //     seam a production anon-client would replace with anonymized routing.
+//   - a call counter persisted via the §11 storage capability (backed by the
+//     harness, scoped to this worker's specifier address) is returned on every
+//     response as `x-anon-rpc-call-count` — it survives worker restarts and
+//     page reloads.
 
 import type {
   AnonRpcWorkerApi,
@@ -39,9 +43,27 @@ const KPS_ECHO_PREFIX = "kps+echo://";
       return;
     }
     if (call.kind !== "fetch") continue; // ignore unknown kinds (§8)
-    call.respond(handleFetch(call.url, call.requestInit));
+    call.respond(handleCall(call.url, call.requestInit));
   }
 })();
+
+async function handleCall(url: string, init?: AnonRequestInit): Promise<AnonFetchResponse> {
+  const count = await bumpCallCount();
+  const resp = await handleFetch(url, init);
+  resp.headers.push(["x-anon-rpc-call-count", String(count)]);
+  return resp;
+}
+
+// Demonstrates §11 storage: a counter that persists across calls, worker
+// restarts, and page reloads. (Reads and writes are not atomic; concurrent
+// calls could observe the same value — fine for a demo counter.)
+async function bumpCallCount(): Promise<number> {
+  const { storage } = anonRpcWorker;
+  const prev = await storage.get("stats/call-count");
+  const count = (prev ? Number(new TextDecoder().decode(prev)) : 0) + 1;
+  await storage.set("stats/call-count", new TextEncoder().encode(String(count)));
+  return count;
+}
 
 async function handleFetch(url: string, init?: AnonRequestInit): Promise<AnonFetchResponse> {
   if (url.startsWith(KPS_ECHO_PREFIX)) {

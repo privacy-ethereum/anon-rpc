@@ -55,6 +55,7 @@ the worker never needs WebRTC itself — the harness owns the transport.
 | [browser-harness/src/host/AnonRpcWorker.ts](browser-harness/src/host/AnonRpcWorker.ts) | Host class (§5): boot, iframe, fetch/acceptCall queue, storage, log |
 | [browser-harness/src/host/specifier.ts](browser-harness/src/host/specifier.ts) | §4: specifier read (eth_call + ABI decode) + keccak verify |
 | [browser-harness/src/host/kps-bridge-host.ts](browser-harness/src/host/kps-bridge-host.ts) | Host side of KPS, using real `@kpstreams/webrtc-client` |
+| [browser-harness/src/host/idb-storage.ts](browser-harness/src/host/idb-storage.ts) | §11 storage backend: IndexedDB, namespaced per specifier address (memory fallback) |
 | [browser-harness/src/iframe/iframe-boot.ts](browser-harness/src/iframe/iframe-boot.ts) | Null-origin iframe: spawns worker, relays port |
 | [browser-harness/src/worker/worker-runtime.ts](browser-harness/src/worker/worker-runtime.ts) | Harness code in the Worker: builds `anonRpcWorker`, loads bundle |
 | [browser-harness/src/worker/anon-rpc-worker-api.ts](browser-harness/src/worker/anon-rpc-worker-api.ts) | Worker-side capability proxies |

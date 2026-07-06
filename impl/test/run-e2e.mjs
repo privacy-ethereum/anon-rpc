@@ -108,6 +108,13 @@ async function main() {
   await page.goto(`${origin}/`);
   await page.waitForFunction(() => "AnonRpcWorker" in window, null, { timeout: 5000 });
 
+  const evalCfg = {
+    ethCallMap,
+    specifierAddress: "0xabc0000000000000000000000000000000000001",
+    kpsAddr,
+    origin,
+  };
+
   const result = await page.evaluate(
     async (cfg) => {
       const provider = {
@@ -158,14 +165,16 @@ async function main() {
       }
       const r5 = await w.fetch(`${cfg.origin}/hello`);
       const afterAbort = await r5.text();
+      // §11 storage demo: the worker persists a call counter and reports it.
+      const callCount = r5.headers.get("x-anon-rpc-call-count");
 
       w.close();
       return {
         sandbox, passthrough, echoed, sentPayload: payload,
-        echoedReq, echoedStream, abortName, afterAbort,
+        echoedReq, echoedStream, abortName, afterAbort, callCount,
       };
     },
-    { ethCallMap, specifierAddress: "0xabc0000000000000000000000000000000000001", kpsAddr, origin },
+    evalCfg,
   );
 
   // assertions
@@ -176,6 +185,33 @@ async function main() {
   check("ReadableStream body transfers across the boundary", result.echoedStream, "stream-body-via-kps");
   check("pre-aborted fetch rejects with AbortError", result.abortName, "AbortError");
   check("fetch after an aborted fetch still works (§8 no-drop)", result.afterAbort, `hello from ${origin}`);
+  // 5 calls were delivered above (the aborted one was withdrawn, never seen).
+  check("worker-persisted call counter (§11 storage)", result.callCount, "5");
+
+  // Reload the page and start a fresh worker: the counter must continue —
+  // this is what proves the store is IndexedDB, not per-page memory.
+  await page.reload();
+  await page.waitForFunction(() => "AnonRpcWorker" in window, null, { timeout: 5000 });
+  const afterReload = await page.evaluate(async (cfg) => {
+    const provider = {
+      request: async ({ method, params }) => {
+        if (method !== "eth_call") throw new Error(`unexpected method ${method}`);
+        const ret = cfg.ethCallMap[params[0].data.slice(0, 10)];
+        if (!ret) throw new Error("no mock eth_call");
+        return ret;
+      },
+    };
+    const w = new window.AnonRpcWorker({
+      address: cfg.specifierAddress,
+      preExisting: { rpcProvider: provider },
+    });
+    await w.ready;
+    const r = await w.fetch(`${cfg.origin}/hello`);
+    const callCount = r.headers.get("x-anon-rpc-call-count");
+    w.close();
+    return { callCount };
+  }, evalCfg);
+  check("storage persists across page reloads (IndexedDB, §11)", afterReload.callCount, "6");
 
   console.log("\n✅ all e2e assertions passed");
   cleanup();
