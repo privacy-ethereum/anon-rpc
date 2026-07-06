@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>anon-rpc prototype — e2e host page</title>
+<script type="module">
+  import { AnonRpcWorker } from "/dist/host.js";
+  // The test driver (Playwright) reaches AnonRpcWorker through this global.
+  window.AnonRpcWorker = AnonRpcWorker;
+</script>
+<body>
+  <p>anon-rpc prototype host page. Driven by test/run-e2e.mjs.</p>
+</body>

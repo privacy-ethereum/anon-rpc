@@ -214,6 +214,9 @@ export type KpsApi = {
   dial(addr: KpsAddr, opts?: KpsDialOptions): Promise<KpsConn>;
   openStream(addr: KpsAddr, opts?: KpsDialOptions): Promise<KpsStream>;
 };
+
+export type KpsDialOptions = { signal?: AbortSignal };
+export type KpsOpenStreamOptions = { signal?: AbortSignal };
 ```
 
 - A `KpsAddr` pins the peer's self-signed certificate by hash; no certificate authority or domain name is involved. A harness MUST authenticate the peer against the pinned hash and MUST fail the dial if it does not match.
@@ -226,14 +229,15 @@ export type KpsApi = {
 export type KpsConn = {
   openStream(opts?: KpsOpenStreamOptions): Promise<KpsStream>;
   acceptStream(opts?: { signal?: AbortSignal }): Promise<KpsStream>;
-  datagrams: KpsDatagrams;
+  sendDatagram(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>;
+  receiveDatagram(opts?: { signal?: AbortSignal }): Promise<Uint8Array>;
   close(reason?: KpsReason): Promise<void>;
   closed: Promise<KpsConnCloseInfo>;
 };
 ```
 
 - `acceptStream()` accepts a stream opened by the peer, following the same one-at-a-time, ordered, no-drop discipline as `acceptCall` (§8).
-- `datagrams` MUST always be present: every connection supports datagrams, so a worker need not feature-detect.
+- `sendDatagram()`/`receiveDatagram()` MUST always be present: every connection supports datagrams, so a worker need not feature-detect. Their semantics are given in §10.3.
 - `close()` MUST invalidate all streams and datagram operations on the connection. `closed` MUST resolve (not reject) on orderly or failed shutdown, carrying `KpsConnCloseInfo`.
 
 ### 10.2 Streams
@@ -263,17 +267,11 @@ A harness MUST NOT expose stream IDs, connection IDs, QUIC transport parameters,
 
 ### 10.3 Datagrams
 
-```ts
-export type KpsDatagrams = {
-  send(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>;
-  incoming: ReadableStream<Uint8Array>;
-};
-```
+Datagrams are connection-level, unreliable, unordered, message-oriented, and size-limited, and are kept entirely separate from streams. There is no notion of an "unreliable stream". They are sent and received directly on the connection (§10.1):
 
-Datagrams are connection-level, unreliable, unordered, message-oriented, and size-limited, and are kept entirely separate from streams. There is no notion of an "unreliable stream".
-
-- `send()` resolving means the harness accepted the datagram for best-effort sending, not that the peer received it.
-- `incoming` MUST be delivered against a bounded buffer with a defined overflow policy (for example, drop-oldest); a harness MUST NOT rely on a single racing receive call.
+- `sendDatagram()` resolving means the harness accepted the datagram for best-effort sending, not that the peer received it.
+- `receiveDatagram()` resolves with the next inbound datagram. While no receive is pending, a harness MUST buffer inbound datagrams in a bounded buffer with a defined overflow policy (for example, drop-oldest); because datagrams are unreliable, dropping on overflow is permitted.
+- If the `opts.signal` passed to `receiveDatagram()` aborts, the pending receive MUST reject with an abort error and MUST NOT consume a datagram.
 
 ## 11. Storage
 
@@ -347,6 +345,6 @@ The log API is console-like but does not promise browser `console` semantics.
 ## 15. References
 
 - anon-rpc proposal article: https://privreads.ethereum.foundation/feed/anon-rpc/
-- KPS (Key Pinned Streams): https://github.com/voltrevo/kps — see its `SPEC.md` for the wire protocol.
+- KPS (Key Pinned Streams): https://github.com/privacy-ethereum/kps — see its `SPEC.md` for the wire protocol.
 - `draft-worker-api.md` (this repository) — non-normative design rationale and examples.
 - RFC 2119, RFC 8174 — requirement-level keywords.

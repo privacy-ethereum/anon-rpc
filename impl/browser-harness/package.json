@@ -1,0 +1,56 @@
+{
+  "name": "@anon-rpc/browser-harness",
+  "version": "0.1.0",
+  "description": "anon-rpc browser harness: loads a hash-pinned anon-client worker under null-origin iframe isolation and exposes an anonymized fetch (SPEC §3.1 conformance target).",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/privacy-ethereum/anon-rpc.git",
+    "directory": "impl/browser-harness"
+  },
+  "homepage": "https://github.com/privacy-ethereum/anon-rpc",
+  "keywords": [
+    "anon-rpc",
+    "ethereum",
+    "privacy",
+    "rpc",
+    "kps",
+    "sandbox",
+    "wallet"
+  ],
+  "main": "./dist/host.js",
+  "types": "./dist/types/host/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/host/index.d.ts",
+      "default": "./dist/host.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/host.js",
+    "dist/host.js.map",
+    "dist/types",
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node build.mjs && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit && tsc -p test --noEmit",
+    "test": "node test/run.mjs",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@kpstreams/webrtc-client": "^0.1.0",
+    "@noble/hashes": "^1.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}
