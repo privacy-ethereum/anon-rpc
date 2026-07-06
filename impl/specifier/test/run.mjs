@@ -8,6 +8,7 @@ import { readFile, rm, mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { uploadToGithubResolver, parseGithubRemote, rawUrl } from "../github-resolver.mjs";
+import { parseDotenv } from "../env.mjs";
 
 const HERE = new URL(".", import.meta.url).pathname;
 const ROOT = new URL("..", import.meta.url).pathname;
@@ -38,6 +39,27 @@ function run(cmd, args, opts = {}) {
 function assert(cond, label) {
   if (!cond) fail(`assertion failed: ${label}`);
   console.log(`  ✓ ${label}`);
+}
+
+// --- .env parsing ------------------------------------------------------------
+
+console.log("dotenv tests");
+{
+  const parsed = parseDotenv(
+    [
+      "# full-line comment",
+      "RPC_URL=https://rpc.example/x#frag", // '#' with no preceding space: part of the value
+      "GITHUB_RESOLVER=1               # inline comment (as in the README example)",
+      'PRIVATE_KEY="0xabc # not a comment inside quotes"',
+      "SPACED = padded value ",
+      "lowercase=ignored",
+    ].join("\n"),
+  );
+  assert(parsed.RPC_URL === "https://rpc.example/x#frag", "unspaced # stays in the value");
+  assert(parsed.GITHUB_RESOLVER === "1", "inline comment stripped from unquoted value");
+  assert(parsed.PRIVATE_KEY === "0xabc # not a comment inside quotes", "quoted value keeps #");
+  assert(parsed.SPACED === "padded value", "surrounding whitespace trimmed");
+  assert(!("lowercase" in parsed), "non-uppercase keys ignored");
 }
 
 // --- github-resolver tests (git only; no foundry needed) ---------------------
@@ -164,12 +186,20 @@ for (let i = 0; ; i++) {
 
 // 5. The real publish script, non-interactive, against anvil. The script
 //    self-verifies the on-chain read-back, so exit 0 + an address is success.
+//    EVERY knob the script reads is pinned here: the script overlays a
+//    developer's local .env under process.env, and inheriting e.g. their
+//    GITHUB_RESOLVER=1 would make the test push to the real remote.
 const out = await run("node", ["publish-worker.mjs", "--yes"], {
   env: {
     ...process.env,
     RPC_URL: rpcUrl,
     PRIVATE_KEY: ANVIL_KEY,
     RESOLVER_URLS: resolverUrl,
+    GITHUB_RESOLVER: "0",
+    SKIP_RESOLVER_CHECK: "0",
+    WORKER_BUNDLE: `${ROOT}../passthrough-worker/dist/passthrough-worker.js`,
+    ETHERSCAN_API_KEY: "",
+    VERIFIER: "etherscan",
   },
 });
 const address = out.match(/address: "(0x[0-9a-fA-F]{40})"/)?.[1];

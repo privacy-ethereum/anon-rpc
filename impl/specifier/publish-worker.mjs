@@ -11,6 +11,9 @@
 //   WORKER_BUNDLE        path to the bundle (default: the passthrough worker,
 //                        auto-rebuilt so the hash matches current source)
 //   SKIP_RESOLVER_CHECK  set to 1 to skip verifying the URLs serve the bytes
+//   ETHERSCAN_API_KEY    if set, the contract source is verified on the
+//                        explorer after deployment (best-effort)
+//   VERIFIER             "etherscan" (default) | "sourcify" (needs no key)
 //
 // Usage: npm run publish-worker [-- --yes --github]
 //
@@ -21,6 +24,8 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { uploadToGithubResolver } from "./github-resolver.mjs";
+import { loadEnv } from "./env.mjs";
+import { verifyContract } from "./verify.mjs";
 
 const HERE = new URL(".", import.meta.url).pathname;
 const DEFAULT_BUNDLE = `${HERE}../passthrough-worker/dist/passthrough-worker.js`;
@@ -29,22 +34,6 @@ const toHex = (b) => "0x" + [...b].map((x) => x.toString(16).padStart(2, "0")).j
 function fail(msg) {
   console.error(`\n❌ ${msg}`);
   process.exit(1);
-}
-
-// --- configuration ---
-
-async function loadEnv() {
-  const env = { ...process.env };
-  try {
-    const dotenv = await readFile(`${HERE}.env`, "utf8");
-    for (const line of dotenv.split("\n")) {
-      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
-      if (m && !(m[1] in process.env)) env[m[1]] = m[2].replace(/^["']|["']$/g, "");
-    }
-  } catch {
-    // no .env file — environment variables only
-  }
-  return env;
 }
 
 function run(cmd, args, opts = {}) {
@@ -62,10 +51,10 @@ function run(cmd, args, opts = {}) {
 }
 
 async function main() {
-  const env = await loadEnv();
+  const env = await loadEnv(`${HERE}.env`);
   const yes = process.argv.includes("--yes");
 
-  const useGithub = env.GITHUB_RESOLVER === "1" || process.argv.includes("--github");
+  const useGithub = ["1", "true"].includes(env.GITHUB_RESOLVER) || process.argv.includes("--github");
 
   const rpcUrl = env.RPC_URL || fail("RPC_URL is not set");
   const privateKey = env.PRIVATE_KEY || fail("PRIVATE_KEY is not set");
@@ -188,6 +177,22 @@ publish plan
     if (!onchainResolvers.includes(url)) fail(`read-back mismatch: workerResolvers() missing ${url}`);
   }
   console.log("✓ on-chain read-back matches");
+
+  // 8. Best-effort source verification on the block explorer. A failure here
+  //    never fails the publish — the deployment already succeeded.
+  const verifier = env.VERIFIER || "etherscan";
+  if (env.ETHERSCAN_API_KEY || verifier === "sourcify") {
+    console.log("\nverifying source on the explorer…");
+    const ok = await verifyContract({
+      address,
+      rpcUrl,
+      apiKey: env.ETHERSCAN_API_KEY,
+      verifier,
+    });
+    if (ok) console.log("✓ source verified");
+  } else {
+    console.log("ℹ set ETHERSCAN_API_KEY (or VERIFIER=sourcify) to verify source; later: npm run verify -- " + address);
+  }
 
   console.log(`
 ✅ worker published

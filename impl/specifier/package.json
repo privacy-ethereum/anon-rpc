@@ -7,7 +7,8 @@
   "scripts": {
     "compile": "forge build",
     "test": "node test/run.mjs",
-    "publish-worker": "node publish-worker.mjs"
+    "publish-worker": "node publish-worker.mjs",
+    "verify": "node verify.mjs"
   },
   "devDependencies": {
     "@noble/hashes": "^1.5.0"

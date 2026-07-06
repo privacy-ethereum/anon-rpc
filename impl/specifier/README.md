@@ -53,6 +53,22 @@ To ship a new worker version later: upload the new bundle to the resolvers,
 then call `setWorker(newHash, newResolvers)` as the owner (e.g.
 `cast send <specifier> "setWorker(bytes32,string[])" <hash> '["https://…"]' …`).
 
+## Explorer source verification
+
+Set `ETHERSCAN_API_KEY` in `.env` (one Etherscan v2 key covers the
+Etherscan-family explorers) and the publish script verifies the source right
+after deploying — best-effort, so an explorer hiccup never fails a completed
+publish. Alternatively `VERIFIER=sourcify` needs no API key.
+
+For an already-deployed specifier:
+
+```sh
+npm run verify -- <specifier-address>
+```
+
+Constructor arguments are recovered from the creation transaction, so this
+works regardless of any `setWorker` calls since deployment.
+
 ## Tests
 
 ```sh
