@@ -8,7 +8,8 @@
     "browser-harness",
     "passthrough-worker",
     "test-worker",
-    "specifier"
+    "specifier",
+    "site"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",

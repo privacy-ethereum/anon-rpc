@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>anon-rpc demo — balance watcher</title>
+<link rel="stylesheet" href="../site.css" />
+<style>
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 22px;
+    margin-bottom: 16px;
+  }
+
+  .card h2 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 0 0 14px;
+  }
+
+  .field {
+    margin-bottom: 14px;
+  }
+
+  .field:last-child {
+    margin-bottom: 0;
+  }
+
+  label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 5px;
+  }
+
+  .has-tip {
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+    cursor: help;
+  }
+
+  .row {
+    display: flex;
+    gap: 8px;
+  }
+
+  input {
+    width: 100%;
+    padding: 10px 12px;
+    font: 0.9rem var(--mono);
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    outline: none;
+  }
+
+  input:focus {
+    border-color: var(--accent);
+  }
+
+  input:disabled {
+    opacity: 0.55;
+  }
+
+  button {
+    font: 600 0.9rem system-ui, sans-serif;
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  button:hover {
+    border-color: var(--accent);
+  }
+
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    width: 100%;
+    padding: 12px;
+  }
+
+  button.primary:hover {
+    filter: brightness(1.08);
+  }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 28px;
+  }
+
+  .pill {
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--border);
+    color: var(--muted);
+  }
+
+  .pill.boot { background: var(--warn-soft); color: var(--warn); }
+  .pill.live { background: var(--ok-soft); color: var(--ok); }
+  .pill.error { background: var(--err-soft); color: var(--err); }
+
+  .status .detail {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  #balance-card {
+    text-align: center;
+    display: none;
+  }
+
+  #balance {
+    font: 600 2.6rem/1.2 var(--mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    margin: 6px 0 2px;
+    transition: color 0.3s;
+  }
+
+  #balance .unit {
+    font-size: 1.1rem;
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  #balance.flash-up { color: var(--up); }
+  #balance.flash-down { color: var(--down); }
+
+  #delta {
+    font: 0.95rem var(--mono);
+    min-height: 1.4em;
+  }
+
+  #delta.up { color: var(--up); }
+  #delta.down { color: var(--down); }
+
+  #checked {
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+
+  .foot-note {
+    color: var(--muted);
+    font-size: 0.83rem;
+    line-height: 1.55;
+  }
+
+  .foot-note code {
+    font-family: var(--mono);
+    font-size: 0.9em;
+  }
+</style>
+<body>
+  <main>
+    <h1><a href="../">anon-rpc</a> demo</h1>
+    <p class="tagline">
+      Watch an ETH balance through a hash-pinned worker running in a
+      null-origin sandbox.
+    </p>
+
+    <div class="card">
+      <h2>Connection</h2>
+      <div class="field">
+        <label for="bootstrap"><span title="Used once, from this page, to read the specifier contract" class="has-tip">Bootstrap RPC URL</span></label>
+        <input id="bootstrap" placeholder="https://ethereum-rpc.publicnode.com" spellcheck="false" />
+      </div>
+      <div class="field">
+        <label for="worker-rpc"><span title="The endpoint the sandboxed worker queries balances from" class="has-tip">Worker RPC URL</span></label>
+        <div class="row">
+          <input id="worker-rpc" placeholder="https://ethereum-rpc.publicnode.com" spellcheck="false" />
+          <button id="copy" type="button" title="Copy the bootstrap URL here">use same</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="specifier"><span title="The on-chain IWorkerSpecifier pinning the worker bundle by keccak256" class="has-tip">Specifier contract</span></label>
+        <input id="specifier" placeholder="0x…" spellcheck="false" />
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Watch</h2>
+      <div class="field">
+        <label for="watch">Address</label>
+        <input id="watch" placeholder="0x…" spellcheck="false" />
+      </div>
+      <div class="field">
+        <button id="toggle" class="primary" type="button">Start watching</button>
+      </div>
+      <div class="status">
+        <span id="pill" class="pill">idle</span>
+        <span id="detail" class="detail"></span>
+      </div>
+    </div>
+
+    <div class="card" id="balance-card">
+      <h2>Balance</h2>
+      <div id="balance">— <span class="unit">ETH</span></div>
+      <div id="delta"></div>
+      <div id="checked"></div>
+    </div>
+
+    <p class="foot-note">
+      Under the hood: the bootstrap RPC is used once to read
+      <code>workerHash()</code> and <code>workerResolvers()</code> from the
+      specifier contract; the worker bundle is fetched, its
+      <code>keccak256</code> verified against the pinned hash, and only then
+      executed — inside a Web Worker in a null-origin sandboxed iframe with no
+      access to this page. Balance queries flow through the worker's
+      <code>fetch</code>. Settings persist in your browser.
+    </p>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
