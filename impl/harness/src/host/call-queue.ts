@@ -41,6 +41,13 @@ export class CallQueue<T> {
     else this.#items.push(item);
   }
 
+  /** Return an item to the FRONT of the queue (it was taken but not delivered). */
+  pushFront(item: T): void {
+    const waiter = this.#waiters.shift();
+    if (waiter) waiter.resolve(item);
+    else this.#items.unshift(item);
+  }
+
   /** Withdraw a not-yet-delivered item. Returns false if it was already taken (or never queued). */
   remove(item: T): boolean {
     const i = this.#items.indexOf(item);

@@ -21,6 +21,13 @@ export function registerKpsBridge(rpc: PortRpc): () => void {
   const addStream = (s: Stream): RpcResult => {
     const streamId = nextId++;
     streams.set(streamId, s);
+    // Close info is PUSHED to the worker (rather than pulled via an RPC): the
+    // settlement is also the registry-prune point, so retired streams — half-
+    // closed, reset by the peer, or closed explicitly — never pin map entries.
+    void s.closed.then((info) => {
+      streams.delete(streamId);
+      rpc.emit("stream.closed", { streamId, info });
+    });
     // Transfer the live readable/writable to the worker. Host keeps the Stream
     // for lifecycle calls (those act on the data channel, not these objects).
     return {
@@ -44,6 +51,10 @@ export function registerKpsBridge(rpc: PortRpc): () => void {
     const c = await dial(addr, { signal });
     const connId = nextId++;
     conns.set(connId, c);
+    void c.closed.then((info) => {
+      conns.delete(connId);
+      rpc.emit("conn.closed", { connId, info });
+    });
     return { value: { connId } };
   });
 
@@ -62,12 +73,8 @@ export function registerKpsBridge(rpc: PortRpc): () => void {
 
   rpc.on("conn.close", async ({ connId, reason }: { connId: number; reason?: KpsReason }) => {
     await conn(connId).close(reason);
-    conns.delete(connId);
+    conns.delete(connId); // the closed handler above also deletes; both are safe
     return { value: undefined };
-  });
-
-  rpc.on("conn.awaitClosed", async ({ connId }) => {
-    return { value: await conn(connId).closed };
   });
 
   rpc.on("conn.sendDatagram", async ({ connId, data }, { signal }) => {
@@ -93,16 +100,17 @@ export function registerKpsBridge(rpc: PortRpc): () => void {
   });
   rpc.on("stream.close", async ({ streamId, reason }: { streamId: number; reason?: KpsReason }) => {
     await stream(streamId).close(reason);
-    streams.delete(streamId);
+    streams.delete(streamId); // the closed handler above also deletes; both are safe
     return { value: undefined };
-  });
-  rpc.on("stream.awaitClosed", async ({ streamId }) => {
-    return { value: await stream(streamId).closed };
   });
 
   return () => {
+    // Streams first: a stream from kps.openStream owns a hidden dedicated
+    // connection that is only torn down when the stream itself closes — the
+    // conns map never saw it.
+    for (const s of streams.values()) void s.close({ code: "closed" }).catch(() => {});
     for (const c of conns.values()) void c.close({ code: "closed" });
-    conns.clear();
     streams.clear();
+    conns.clear();
   };
 }

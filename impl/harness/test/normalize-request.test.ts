@@ -49,6 +49,46 @@ test("ReadableStream body is passed through for transfer, not buffered", async (
   assert.ok(n.transfer?.includes(stream as unknown as Transferable));
 });
 
+test("buffered URLSearchParams body keeps its derived content-type", async () => {
+  const n = await normalizeRequest("http://x.test/", {
+    method: "POST",
+    body: new URLSearchParams({ a: "1", b: "2" }),
+  });
+  const ct = n.requestInit?.headers?.find(([k]) => k === "content-type")?.[1];
+  assert.match(ct ?? "", /application\/x-www-form-urlencoded/);
+  assert.equal(await drain(n.requestInit?.body), "a=1&b=2");
+});
+
+test("buffered FormData body keeps its multipart boundary content-type", async () => {
+  const fd = new FormData();
+  fd.append("field", "value");
+  const n = await normalizeRequest("http://x.test/", { method: "POST", body: fd });
+  const ct = n.requestInit?.headers?.find(([k]) => k === "content-type")?.[1];
+  assert.match(ct ?? "", /multipart\/form-data; boundary=/);
+});
+
+test("caller-set content-type is not overridden by the derived one", async () => {
+  const n = await normalizeRequest("http://x.test/", {
+    method: "POST",
+    headers: { "Content-Type": "text/custom" },
+    body: new URLSearchParams({ a: "1" }),
+  });
+  const cts = n.requestInit?.headers?.filter(([k]) => k.toLowerCase() === "content-type");
+  assert.deepEqual(cts, [["Content-Type", "text/custom"]]);
+});
+
+test("fresh buffers are transferred; caller-owned Uint8Array is not", async () => {
+  const fromString = await normalizeRequest("http://x.test/", { method: "POST", body: "abc" });
+  assert.ok(
+    fromString.transfer?.includes((fromString.requestInit?.body as Uint8Array).buffer as ArrayBuffer),
+    "string-derived body buffer should be in the transfer list",
+  );
+
+  const mine = new Uint8Array([1, 2, 3]);
+  const fromBytes = await normalizeRequest("http://x.test/", { method: "POST", body: mine });
+  assert.equal(fromBytes.transfer?.length, 0, "caller's own buffer must not be detached");
+});
+
 test("Request input carries method/headers/body/signal (§5 typeof fetch)", async () => {
   const req = new Request("http://x.test/req", {
     method: "POST",

@@ -34,7 +34,8 @@ export class RpcError extends Error {
   }
 }
 
-function serializeError(err: unknown): SerializedError {
+/** The one error-marshalling implementation; pair with `new RpcError(...)` to deserialize. */
+export function serializeError(err: unknown): SerializedError {
   if (err instanceof Error) {
     const code = (err as { code?: unknown }).code;
     return {

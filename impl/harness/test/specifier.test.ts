@@ -66,6 +66,24 @@ test("readSpecifier decodes workerHash and workerResolvers", async () => {
   assert.deepEqual(spec.resolvers, resolvers);
 });
 
+test("readSpecifier rejects malicious ABI data instead of hanging/OOM", async () => {
+  // Length word of 2^255: bounds checks must throw, not loop.
+  const huge = concat([word(0x20), pad32(new Uint8Array([0x80]))]); // len word = huge value
+  const provider = mockProvider({
+    [selector("workerHash()")]: "0x" + "ab".repeat(32),
+    [selector("workerResolvers()")]: "0x" + toHex(huge),
+  });
+  await assert.rejects(readSpecifier(provider, "0x" + "01".repeat(20)), /ABI decode/);
+});
+
+test("readSpecifier rejects truncated ABI data", async () => {
+  const provider = mockProvider({
+    [selector("workerHash()")]: "0x" + "ab".repeat(32),
+    [selector("workerResolvers()")]: "0x" + toHex(word(0x20)), // offset points past the buffer
+  });
+  await assert.rejects(readSpecifier(provider, "0x" + "01".repeat(20)), /ABI decode/);
+});
+
 // fetchAndVerifyBundle uses global fetch; substitute a scripted one per test.
 async function withFetch<T>(impl: typeof fetch, fn: () => Promise<T>): Promise<T> {
   const orig = globalThis.fetch;

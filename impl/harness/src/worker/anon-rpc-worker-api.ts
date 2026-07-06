@@ -6,6 +6,7 @@
 import type {
   AnonRpcWorkerApi,
   FetchCall,
+  IncomingCall,
   AnonFetchResponse,
   AnonRequestInit,
   KpsApi,
@@ -19,12 +20,18 @@ import type {
   LogApi,
   LogArg,
 } from "../spec-types.js";
-import { PortRpc } from "../protocol.js";
+import { PortRpc, serializeError } from "../protocol.js";
 
 type StreamParts = {
   streamId: number;
   readable: ReadableStream<Uint8Array>;
   writable: WritableStream<Uint8Array>;
+};
+
+type AcceptedCall = {
+  callId: number;
+  url: string;
+  requestInit?: AnonRequestInit & { hasSignal?: boolean };
 };
 
 export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
@@ -40,8 +47,22 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
     else preAborted.add(callId);
   });
 
+  // Close info is pushed by the host when the underlying stream/conn settles
+  // (which is also when the host prunes its registries); each proxy holds a
+  // deferred that the single event handler resolves.
+  const streamClosed = new Map<number, (info: KpsStreamCloseInfo) => void>();
+  const connClosed = new Map<number, (info: KpsConnCloseInfo) => void>();
+  rpc.onEvent("stream.closed", ({ streamId, info }: { streamId: number; info: KpsStreamCloseInfo }) => {
+    streamClosed.get(streamId)?.(info);
+    streamClosed.delete(streamId);
+  });
+  rpc.onEvent("conn.closed", ({ connId, info }: { connId: number; info: KpsConnCloseInfo }) => {
+    connClosed.get(connId)?.(info);
+    connClosed.delete(connId);
+  });
+
   function makeStream(p: StreamParts): KpsStream {
-    let closed: Promise<KpsStreamCloseInfo> | undefined;
+    const closed = new Promise<KpsStreamCloseInfo>((resolve) => streamClosed.set(p.streamId, resolve));
     return {
       readable: p.readable,
       writable: p.writable,
@@ -49,14 +70,12 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
       cancelRead: (reason?: KpsReason) => rpc.call("stream.cancelRead", { streamId: p.streamId, reason }),
       resetWrite: (reason?: KpsReason) => rpc.call("stream.resetWrite", { streamId: p.streamId, reason }),
       close: (reason?: KpsReason) => rpc.call("stream.close", { streamId: p.streamId, reason }),
-      get closed() {
-        return (closed ??= rpc.call<KpsStreamCloseInfo>("stream.awaitClosed", { streamId: p.streamId }));
-      },
+      closed,
     };
   }
 
   function makeConn(connId: number): KpsConn {
-    let closed: Promise<KpsConnCloseInfo> | undefined;
+    const closed = new Promise<KpsConnCloseInfo>((resolve) => connClosed.set(connId, resolve));
     return {
       openStream: async (opts) =>
         makeStream(await rpc.call<StreamParts>("conn.openStream", { connId }, sigOpt(opts))),
@@ -65,9 +84,7 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
       close: (reason?: KpsReason) => rpc.call("conn.close", { connId, reason }),
       sendDatagram: (data, opts) => rpc.call("conn.sendDatagram", { connId, data }, sigOpt(opts)),
       receiveDatagram: (opts) => rpc.call<Uint8Array>("conn.receiveDatagram", { connId }, sigOpt(opts)),
-      get closed() {
-        return (closed ??= rpc.call<KpsConnCloseInfo>("conn.awaitClosed", { connId }));
-      },
+      closed,
     };
   }
 
@@ -96,16 +113,50 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
     error: (...args: LogArg[]) => rpc.emit("log", { level: "error", args }),
   };
 
+  // acceptCall abort handling lives HERE, not at the RPC layer: a transport-
+  // level abort can lose the race with delivery, in which case the host has
+  // already consumed a call from its queue and the res is silently dropped —
+  // the call would be lost (§8 forbids that). Instead the RPC runs to
+  // completion, and if it delivers after the abort, the call is handed back
+  // to the host for redelivery.
+  function acceptCall(opts?: { signal?: AbortSignal }): Promise<IncomingCall> {
+    const abortErr = () => new DOMException("aborted", "AbortError");
+    const signal = opts?.signal;
+    const toCall = (r: AcceptedCall) =>
+      makeFetchCall(rpc, callAborts, preAborted, r.callId, r.url, r.requestInit);
+    if (signal?.aborted) return Promise.reject(signal.reason ?? abortErr());
+    const pending = rpc.call<AcceptedCall>("acceptCall", {});
+    if (!signal) return pending.then(toCall);
+    return new Promise<IncomingCall>((resolve, reject) => {
+      let settled = false;
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        // If the host still delivers, return the call for redelivery.
+        pending.then((r) => rpc.emit("requeue-call", { callId: r.callId }), () => {});
+        reject(signal.reason ?? abortErr());
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      pending.then(
+        (r) => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener("abort", onAbort);
+          resolve(toCall(r));
+        },
+        (e) => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener("abort", onAbort);
+          reject(e);
+        },
+      );
+    });
+  }
+
   return {
     signalReady: () => rpc.emit("ready", {}),
-    acceptCall: async (opts) => {
-      const { callId, url, requestInit } = await rpc.call<{
-        callId: number;
-        url: string;
-        requestInit?: AnonRequestInit & { hasSignal?: boolean };
-      }>("acceptCall", {}, sigOpt(opts));
-      return makeFetchCall(rpc, callAborts, preAborted, callId, url, requestInit);
-    },
+    acceptCall,
     kps,
     storage,
     log,
@@ -143,30 +194,27 @@ function makeFetchCall(
       responded = true;
       Promise.resolve(response)
         .then((r) => {
-          const transfer = r.body instanceof ReadableStream ? [r.body as unknown as Transferable] : [];
+          // respond() hands the body off: streams are transferred, and a
+          // Uint8Array's buffer is too (a multi-MB response must not be
+          // structured-cloned). Worker code must not reuse the buffer after
+          // responding with it.
+          const transfer =
+            r.body instanceof ReadableStream
+              ? [r.body as unknown as Transferable]
+              : r.body instanceof Uint8Array
+                ? [r.body.buffer as unknown as Transferable]
+                : [];
           return rpc.call("respond", { callId, ok: true, response: r }, { transfer });
         })
         .catch((e: unknown) =>
           // Carry name/code across the boundary (§12): host logic may branch
           // on code, never on message text.
-          rpc.call("respond", { callId, ok: false, error: serializeRespondError(e) }),
+          rpc.call("respond", { callId, ok: false, error: serializeError(e) }),
         )
         .catch(() => {}) // the failure respond itself may be refused (e.g. call already aborted)
         .finally(() => callAborts.delete(callId));
     },
   };
-}
-
-function serializeRespondError(e: unknown): { name?: string; message: string; code?: string } {
-  if (e instanceof Error) {
-    const code = (e as { code?: unknown }).code;
-    return {
-      name: e.name,
-      message: e.message,
-      ...(typeof code === "string" ? { code } : {}),
-    };
-  }
-  return { message: String(e) };
 }
 
 async function* listKeys(rpc: PortRpc, prefix?: string, signal?: AbortSignal): AsyncIterable<StorageKey> {

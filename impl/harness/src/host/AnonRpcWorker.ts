@@ -5,7 +5,7 @@
 // capability API for the worker, and expose `fetch` to the host.
 
 import type { WorkerInit, AnonFetchResponse } from "../spec-types.js";
-import { PortRpc, RpcError } from "../protocol.js";
+import { PortRpc, RpcError, type SerializedError } from "../protocol.js";
 import { readSpecifier, fetchAndVerifyBundle } from "./specifier.js";
 import { registerKpsBridge } from "./kps-bridge-host.js";
 import { CallQueue } from "./call-queue.js";
@@ -52,6 +52,9 @@ export class AnonRpcWorker {
   #nextCallId = 1;
   #readyResolve!: () => void;
   #readyReject!: (e: unknown) => void;
+  // Set on fatal failure (boot failure, worker crash, close): everything
+  // pending is rejected with it and future fetches fail fast.
+  #failure?: unknown;
 
   constructor(init: WorkerInit) {
     this.#init = init;
@@ -65,7 +68,21 @@ export class AnonRpcWorker {
     this.ready.catch(() => {});
     // §5: `fetch` MUST be this-bound so it works as a free function.
     this.fetch = this.#fetch.bind(this);
-    this.#boot().catch((e) => this.#readyReject(e));
+    this.#boot().catch((e) => this.#fail(e));
+  }
+
+  // A dead worker fails everything, not just `ready`: in-flight and queued
+  // fetches would otherwise hang with no error surfaced.
+  #fail(err: unknown): void {
+    if (this.#failure !== undefined) return;
+    this.#failure = err;
+    this.#readyReject(err);
+    for (const rec of this.#calls.values()) {
+      rec.cleanup?.();
+      rec.reject(err);
+    }
+    this.#calls.clear();
+    this.#queue.rejectAll(err);
   }
 
   async #boot(): Promise<void> {
@@ -90,10 +107,11 @@ export class AnonRpcWorker {
       const onMessage = (ev: MessageEvent) => {
         if (ev.source !== iframe.contentWindow) return;
         if (ev.data?.kind === "iframe-ready") resolve();
-        // Worker script-level errors (e.g. the runtime itself failing) must
-        // surface instead of leaving `ready` pending forever.
+        // An uncaught worker error is fatal harness policy: the worker is
+        // untrusted code in an unknown state, so everything pending fails —
+        // whether it happens during boot or after signalReady.
         if (ev.data?.kind === "worker-error") {
-          this.#readyReject(new Error(`worker error: ${ev.data.message}`));
+          this.#fail(new Error(`worker error: ${ev.data.message}`));
         }
       };
       this.#onWindowMessage = onMessage;
@@ -119,7 +137,15 @@ export class AnonRpcWorker {
     // The worker runtime reports a bundle that failed to load (§4-valid bytes
     // can still throw at top level); without this, `ready` would hang.
     rpc.onEvent("boot-error", ({ message }: { message: string }) => {
-      this.#readyReject(new Error(`worker bundle failed to load: ${message}`));
+      this.#fail(new Error(`worker bundle failed to load: ${message}`));
+    });
+
+    // The worker aborted an acceptCall that lost the race with delivery: the
+    // call comes back to the FRONT of the queue for the next acceptCall
+    // (§8: an aborted acceptCall must not consume a call).
+    rpc.onEvent("requeue-call", ({ callId }: { callId: number }) => {
+      const rec = this.#calls.get(callId);
+      if (rec) this.#queue.pushFront(rec);
     });
 
     rpc.onEvent("log", ({ level, args }: { level: string; args: unknown[] }) => {
@@ -141,7 +167,7 @@ export class AnonRpcWorker {
       callId: number;
       ok: boolean;
       response?: AnonFetchResponse;
-      error?: { name?: string; message?: string; code?: string };
+      error?: SerializedError;
     }) => {
       const rec = this.#calls.get(msg.callId);
       // Unknown callId is expected when the host aborted the call after the
@@ -150,14 +176,17 @@ export class AnonRpcWorker {
       this.#calls.delete(msg.callId);
       rec.cleanup?.();
       if (msg.ok && msg.response) {
-        rec.resolve(toResponse(msg.response));
+        // toResponse validates worker-supplied status/headers; a throw must
+        // settle the fetch (the record is already removed) rather than escape.
+        try {
+          rec.resolve(toResponse(msg.response));
+        } catch (e) {
+          rec.reject(e);
+        }
       } else {
-        // Preserve name/code across the boundary (§12: message is diagnostic
-        // only; code is what host logic may branch on).
-        const err = new Error(msg.error?.message ?? "worker failed the call");
-        if (msg.error?.name) err.name = msg.error.name;
-        if (msg.error?.code) (err as { code?: string }).code = msg.error.code;
-        rec.reject(err);
+        // §12: name/code cross the boundary intact; host logic may branch on
+        // code, never on message text.
+        rec.reject(new RpcError(msg.error ?? { name: "Error", message: "worker failed the call" }));
       }
       return { value: undefined };
     });
@@ -184,6 +213,7 @@ export class AnonRpcWorker {
   }
 
   async #fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    if (this.#failure !== undefined) throw this.#failure;
     const { url, requestInit, transfer, signal: hostSignal } = await normalizeRequest(input, init);
     const callId = this.#nextCallId++;
 
@@ -223,14 +253,7 @@ export class AnonRpcWorker {
     this.#disposeKps?.();
     if (this.#onWindowMessage) window.removeEventListener("message", this.#onWindowMessage);
     this.#iframe?.remove();
-    const err = new Error("worker closed");
-    this.#readyReject(err); // no-op if ready already resolved
-    for (const rec of this.#calls.values()) {
-      rec.cleanup?.();
-      rec.reject(err);
-    }
-    this.#calls.clear();
-    this.#queue.rejectAll(err);
+    this.#fail(new Error("worker closed"));
   }
 }
 
@@ -245,7 +268,11 @@ function toResponse(r: AnonFetchResponse): Response {
   const status = r.status;
   // 204/205/304 must have a null body.
   const body = status === 204 || status === 205 || status === 304 ? null : (r.body as BodyInit);
-  return new Response(body, { status, headers });
+  const resp = new Response(body, { status, headers });
+  // Response.url is read-only and unset by the constructor; surface the
+  // worker-reported post-redirect URL (§9.2) by shadowing the getter.
+  if (r.url) Object.defineProperty(resp, "url", { value: r.url });
+  return resp;
 }
 
 export { RpcError };

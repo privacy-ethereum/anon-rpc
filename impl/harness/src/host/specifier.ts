@@ -82,10 +82,15 @@ function decodeBytes32(ret: Uint8Array): string {
   return toHex(ret.slice(0, 32));
 }
 
+// ABI return data comes from an untrusted RPC endpoint; every offset and
+// length is bounds-checked so malicious data throws instead of OOM/hanging.
 function word(ret: Uint8Array, at: number): number {
-  // Read a 32-byte word as an unsigned int (assumes it fits in JS number).
+  if (at < 0 || at + 32 > ret.length) throw new Error("ABI decode: word out of bounds");
   let n = 0;
-  for (let i = at; i < at + 32; i++) n = n * 256 + ret[i];
+  for (let i = at; i < at + 32; i++) {
+    n = n * 256 + ret[i];
+    if (n > Number.MAX_SAFE_INTEGER) throw new Error("ABI decode: word too large");
+  }
   return n;
 }
 
@@ -93,11 +98,13 @@ function decodeStringArray(ret: Uint8Array): string[] {
   // Return is a single dynamic value: head word is the offset to the array.
   const base = word(ret, 0);
   const len = word(ret, base);
+  if (base + 32 + len * 32 > ret.length) throw new Error("ABI decode: array length out of bounds");
   const out: string[] = [];
   const dec = new TextDecoder();
   for (let i = 0; i < len; i++) {
     const elemOff = base + 32 + word(ret, base + 32 + i * 32);
     const strLen = word(ret, elemOff);
+    if (elemOff + 32 + strLen > ret.length) throw new Error("ABI decode: string out of bounds");
     out.push(dec.decode(ret.slice(elemOff + 32, elemOff + 32 + strLen)));
   }
   return out;

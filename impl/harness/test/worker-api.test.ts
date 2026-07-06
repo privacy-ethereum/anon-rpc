@@ -131,6 +131,47 @@ test("call-abort after delivery aborts the live signal", async () => {
   }
 });
 
+test("acceptCall abort that loses the delivery race hands the call back (§8)", async () => {
+  const { host, api, close } = setup();
+  try {
+    host.on("acceptCall", async () => {
+      await new Promise((r) => setTimeout(r, 30)); // deliver AFTER the abort below
+      return { value: { callId: 5, url: "u" } };
+    });
+    const requeued = new Promise<any>((resolve) => host.onEvent("requeue-call", resolve));
+
+    const ac = new AbortController();
+    const p = api.acceptCall({ signal: ac.signal });
+    setTimeout(() => ac.abort(), 5);
+    await assert.rejects(p, (e: Error) => e.name === "AbortError");
+    // The host's late delivery must come back for redelivery, not vanish.
+    assert.deepEqual(await requeued, { callId: 5 });
+  } finally {
+    close();
+  }
+});
+
+test("respond transfers a Uint8Array body instead of cloning it", async () => {
+  const { host, api, close } = setup();
+  try {
+    host.on("acceptCall", () => ({ value: { callId: 6, url: "u" } }));
+    const responded = new Promise<any>((resolve) =>
+      host.on("respond", (msg) => {
+        resolve(msg);
+        return { value: undefined };
+      }),
+    );
+    const call = await api.acceptCall();
+    const body = new Uint8Array([9, 9, 9]);
+    call.respond({ status: 200, headers: [], body });
+    const msg = await responded;
+    assert.deepEqual([...msg.response.body], [9, 9, 9]); // bytes arrived
+    assert.equal(body.byteLength, 0, "source view should be detached (transferred), not cloned");
+  } finally {
+    close();
+  }
+});
+
 test("storage proxies forward abort signals (§11 declared surface)", async () => {
   const { host, api, close } = setup();
   try {

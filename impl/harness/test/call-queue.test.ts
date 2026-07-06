@@ -56,6 +56,21 @@ test("abort of one pending take leaves the others live", async () => {
   assert.equal(await live, 42);
 });
 
+test("pushFront returns an item to the head of the queue", async () => {
+  const q = new CallQueue<string>();
+  q.push("second");
+  q.pushFront("first");
+  assert.equal(await q.take(), "first");
+  assert.equal(await q.take(), "second");
+});
+
+test("pushFront delivers to a pending take", async () => {
+  const q = new CallQueue<string>();
+  const p = q.take();
+  q.pushFront("x");
+  assert.equal(await p, "x");
+});
+
 test("remove withdraws only not-yet-delivered items", async () => {
   const q = new CallQueue<string>();
   q.push("a");
