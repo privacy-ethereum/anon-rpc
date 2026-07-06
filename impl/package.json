@@ -6,7 +6,8 @@
   "description": "anon-rpc reference prototype: harness + passthrough worker (see ../SPEC.md).",
   "workspaces": [
     "browser-harness",
-    "passthrough-worker"
+    "passthrough-worker",
+    "test-worker"
   ],
   "scripts": {
     "build": "npm run build --workspaces",

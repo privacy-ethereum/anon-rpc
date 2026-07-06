@@ -1,9 +1,9 @@
 # anon-rpc passthrough worker
 
-A template [anon-rpc](../../SPEC.md) worker — the §3.2 conformance target. It
-answers `fetch` calls with a plain `fetch` passthrough (the single seam a real
-anon-client replaces with anonymized routing), and routes `kps+echo://<addr>`
-URLs over a real KPS stream to demonstrate the transport.
+The **minimal** [anon-rpc](../../SPEC.md) worker — the §3.2 conformance target,
+reduced to its essence: an `acceptCall` loop that fulfils every fetch call with
+a plain `fetch` passthrough. That plain `fetch` is the single seam a production
+anon-client replaces with anonymized routing (e.g. over `anonRpcWorker.kps`).
 
 **To write your own anon-client, copy this directory.** It is self-contained on
 purpose:
@@ -13,8 +13,12 @@ purpose:
   artifact identified by the hash of its bytes (§4), with no build-time
   dependency on any harness.
 - The only platform a worker may rely on is the global `anonRpcWorker`
-  capability object (§7). This template also uses ambient `fetch`, which is the
-  part you replace.
+  capability object (§7). This template also uses ambient `fetch`, which is
+  the part you replace.
+
+For a worker that exercises the wider capability surface (KPS streams,
+persistent storage), see [../test-worker](../test-worker), which the repo's
+e2e drives.
 
 ```sh
 npm run build       # esbuild → dist/passthrough-worker.js (the hashable §4 artifact)

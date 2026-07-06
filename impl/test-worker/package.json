@@ -1,9 +1,9 @@
 {
-  "name": "anon-rpc-passthrough-worker",
+  "name": "anon-rpc-test-worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Minimal anon-rpc worker template (SPEC.md §3.2): a pure fetch passthrough. Copy this directory to start your own anon-client.",
+  "description": "Test worker for the anon-rpc e2e: exercises fetch passthrough, KPS routing, and persistent storage. Not the template - copy ../passthrough-worker instead.",
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit"

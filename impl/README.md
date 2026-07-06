@@ -6,11 +6,15 @@ worker, as two npm workspaces:
 - [browser-harness/](browser-harness/) — the wallet-side runtime (the §3.1
   conformance target), published as
   [`@anon-rpc/browser-harness`](https://www.npmjs.com/package/@anon-rpc/browser-harness).
-- [passthrough-worker/](passthrough-worker/) — a template worker (the §3.2
-  conformance target). **Copy that directory to write your own anon-client**;
-  it deliberately copies the worker-facing spec types instead of importing
-  them, so it stands alone. Not published: workers are distributed by content
-  hash via specifier resolvers (§4), not npm.
+- [passthrough-worker/](passthrough-worker/) — the minimal template worker
+  (the §3.2 conformance target): a pure fetch passthrough. **Copy that
+  directory to write your own anon-client**; it deliberately copies the
+  worker-facing spec types instead of importing them, so it stands alone.
+  Not published: workers are distributed by content hash via specifier
+  resolvers (§4), not npm.
+- [test-worker/](test-worker/) — the worker the e2e drives: exercises the
+  wider capability surface (KPS routing, persistent storage) on top of the
+  passthrough behaviour.
 
 The harness runs untrusted, hash-pinned worker code inside a Web Worker in a null-origin
 sandboxed iframe (§6), and exposes the `AnonRpcWorkerApi` capability surface
@@ -32,10 +36,10 @@ from the host to the worker.
                                           │    worker-runtime (harness): builds
         MessageChannel port ──────────────┼──▶  anonRpcWorker, importScripts the
         (relayed once through the iframe, │     verified bundle
-         then host↔worker direct)         │    passthrough-worker (untrusted,
+         then host↔worker direct)         │    worker bundle (untrusted,
                                           │     hash-pinned): acceptCall loop,
-                                          │     fetch passthrough, kps+echo://
-                                          │     routing
+                                          │     fetch passthrough (+ kps/storage
+                                          │     in the test worker)
 ```
 
 The capability port carries a small request/response + event RPC
@@ -59,7 +63,8 @@ the worker never needs WebRTC itself — the harness owns the transport.
 | [browser-harness/src/iframe/iframe-boot.ts](browser-harness/src/iframe/iframe-boot.ts) | Null-origin iframe: spawns worker, relays port |
 | [browser-harness/src/worker/worker-runtime.ts](browser-harness/src/worker/worker-runtime.ts) | Harness code in the Worker: builds `anonRpcWorker`, loads bundle |
 | [browser-harness/src/worker/anon-rpc-worker-api.ts](browser-harness/src/worker/anon-rpc-worker-api.ts) | Worker-side capability proxies |
-| [passthrough-worker/src/passthrough-worker.ts](passthrough-worker/src/passthrough-worker.ts) | The §3.2 conforming worker template (own copy of the worker-facing types) |
+| [passthrough-worker/src/passthrough-worker.ts](passthrough-worker/src/passthrough-worker.ts) | The minimal §3.2 worker template: pure fetch passthrough (own copy of the worker-facing types) |
+| [test-worker/src/test-worker.ts](test-worker/src/test-worker.ts) | e2e worker: passthrough + kps+echo:// routing + persisted call counter |
 
 ## Prerequisites
 

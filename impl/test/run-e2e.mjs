@@ -74,22 +74,27 @@ function encodeStringArray(strings) {
   return concat([word(0x20), array]);
 }
 
+// Two workers under test, each with its own mock specifier address:
+// the capability-exercising test worker and the minimal template.
+const TEST_ADDR = "0xabc0000000000000000000000000000000000001";
+const PT_ADDR = "0xabc0000000000000000000000000000000000002";
+
 async function main() {
-  // 1. build both workspaces
+  // 1. build all workspaces
   await run("npm", ["run", "build"], { cwd: ROOT });
 
-  // 2. hash + mock specifier
-  const workerBytes = new Uint8Array(
+  // 2. hash both worker bundles for their mock specifiers
+  const testWorkerBytes = new Uint8Array(await readFile(`${ROOT}test-worker/dist/test-worker.js`));
+  const ptWorkerBytes = new Uint8Array(
     await readFile(`${ROOT}passthrough-worker/dist/passthrough-worker.js`),
   );
-  const workerHash = "0x" + toHex(keccak_256(workerBytes));
 
   // 3. kps echo server
   const kpsAddr = await startKpsServer();
   console.log(`kps echo server: ${kpsAddr}`);
 
   // 4. http server
-  const { origin, ethCallMap, port } = await startHttpServer({ workerHash });
+  const { origin, ethCallMap, port } = await startHttpServer({ testWorkerBytes, ptWorkerBytes });
   console.log(`http server: ${origin}`);
 
   // 5. drive chromium
@@ -109,8 +114,9 @@ async function main() {
   await page.waitForFunction(() => "AnonRpcWorker" in window, null, { timeout: 5000 });
 
   const evalCfg = {
-    ethCallMap,
-    specifierAddress: "0xabc0000000000000000000000000000000000001",
+    ethCallMap, // nested: address -> selector -> return data
+    testAddress: TEST_ADDR,
+    ptAddress: PT_ADDR,
     kpsAddr,
     origin,
   };
@@ -121,13 +127,13 @@ async function main() {
         request: async ({ method, params }) => {
           if (method !== "eth_call") throw new Error(`unexpected method ${method}`);
           const sel = params[0].data.slice(0, 10);
-          const ret = cfg.ethCallMap[sel];
-          if (!ret) throw new Error(`no mock eth_call for ${sel}`);
+          const ret = cfg.ethCallMap[params[0].to]?.[sel];
+          if (!ret) throw new Error(`no mock eth_call for ${params[0].to} ${sel}`);
           return ret;
         },
       };
       const w = new window.AnonRpcWorker({
-        address: cfg.specifierAddress,
+        address: cfg.testAddress,
         preExisting: { rpcProvider: provider },
       });
       await w.ready;
@@ -169,9 +175,22 @@ async function main() {
       const callCount = r5.headers.get("x-anon-rpc-call-count");
 
       w.close();
+
+      // The minimal template worker works standalone under its own specifier.
+      const pt = new window.AnonRpcWorker({
+        address: cfg.ptAddress,
+        preExisting: { rpcProvider: provider },
+      });
+      await pt.ready;
+      const rp = await pt.fetch(`${cfg.origin}/hello`);
+      const ptBody = await rp.text();
+      const ptCountHeader = rp.headers.get("x-anon-rpc-call-count");
+      pt.close();
+
       return {
         sandbox, passthrough, echoed, sentPayload: payload,
         echoedReq, echoedStream, abortName, afterAbort, callCount,
+        ptBody, ptCountHeader,
       };
     },
     evalCfg,
@@ -187,6 +206,8 @@ async function main() {
   check("fetch after an aborted fetch still works (§8 no-drop)", result.afterAbort, `hello from ${origin}`);
   // 5 calls were delivered above (the aborted one was withdrawn, never seen).
   check("worker-persisted call counter (§11 storage)", result.callCount, "5");
+  check("minimal passthrough-worker template serves fetch", result.ptBody, `hello from ${origin}`);
+  check("minimal template adds no extra headers", result.ptCountHeader, null);
 
   // Reload the page and start a fresh worker: the counter must continue —
   // this is what proves the store is IndexedDB, not per-page memory.
@@ -196,13 +217,13 @@ async function main() {
     const provider = {
       request: async ({ method, params }) => {
         if (method !== "eth_call") throw new Error(`unexpected method ${method}`);
-        const ret = cfg.ethCallMap[params[0].data.slice(0, 10)];
+        const ret = cfg.ethCallMap[params[0].to]?.[params[0].data.slice(0, 10)];
         if (!ret) throw new Error("no mock eth_call");
         return ret;
       },
     };
     const w = new window.AnonRpcWorker({
-      address: cfg.specifierAddress,
+      address: cfg.testAddress,
       preExisting: { rpcProvider: provider },
     });
     await w.ready;
@@ -219,7 +240,7 @@ async function main() {
 
   /* helpers bound to closure */
 
-  async function startHttpServer({ workerHash }) {
+  async function startHttpServer({ testWorkerBytes, ptWorkerBytes }) {
     // The page has no bundler, so bundle the PUBLISHED entry (dist/host.js,
     // deps external) against node_modules here — exercising exactly what a
     // consumer's bundler would resolve.
@@ -233,14 +254,14 @@ async function main() {
       logLevel: "warning",
     });
     const hostBundle = bundled.outputFiles[0].contents;
-    const workerBundle = await readFile(`${ROOT}passthrough-worker/dist/passthrough-worker.js`);
     const page = await readFile(`${HERE}page.html`);
 
     const server = createServer(async (req, res) => {
       const url = req.url.split("?")[0];
       if (url === "/") return send(res, 200, "text/html", page);
       if (url === "/dist/host.js") return send(res, 200, "text/javascript", hostBundle);
-      if (url === "/dist/passthrough-worker.js") return send(res, 200, "text/javascript", workerBundle);
+      if (url === "/dist/test-worker.js") return send(res, 200, "text/javascript", testWorkerBytes);
+      if (url === "/dist/passthrough-worker.js") return send(res, 200, "text/javascript", ptWorkerBytes);
       if (url === "/hello") return send(res, 200, "text/plain", `hello from ${originRef.value}`);
       if (url === "/echo" && req.method === "POST") {
         const chunks = [];
@@ -256,10 +277,14 @@ async function main() {
     const origin = `http://127.0.0.1:${port}`;
     originRef.value = origin;
 
-    const resolvers = [`${origin}/dist/passthrough-worker.js`];
+    // One mock specifier per worker: address -> selector -> ABI return data.
+    const specifier = (bytes, url) => ({
+      [selector("workerHash()")]: "0x" + toHex(keccak_256(bytes)),
+      [selector("workerResolvers()")]: "0x" + toHex(encodeStringArray([url])),
+    });
     const ethCallMap = {
-      [selector("workerHash()")]: workerHash,
-      [selector("workerResolvers()")]: "0x" + toHex(encodeStringArray(resolvers)),
+      [TEST_ADDR]: specifier(testWorkerBytes, `${origin}/dist/test-worker.js`),
+      [PT_ADDR]: specifier(ptWorkerBytes, `${origin}/dist/passthrough-worker.js`),
     };
     return { origin, ethCallMap, port };
   }
