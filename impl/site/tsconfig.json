@@ -11,7 +11,15 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": []
+    "types": [],
+    // Typecheck against the harness SOURCE so `npm run typecheck` works on a
+    // fresh clone before any build (the package's published types live in
+    // dist/, which may not exist yet). The bundler still resolves the real
+    // package exports at build time.
+    "baseUrl": ".",
+    "paths": {
+      "@anon-rpc/browser-harness": ["../browser-harness/src/host/index.ts"]
+    }
   },
   "include": ["src"]
 }
