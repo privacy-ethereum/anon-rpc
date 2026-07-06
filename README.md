@@ -1,5 +1,7 @@
 # anon-rpc
 
+[![ci](https://github.com/privacy-ethereum/anon-rpc/actions/workflows/ci.yml/badge.svg)](https://github.com/privacy-ethereum/anon-rpc/actions/workflows/ci.yml)
+
 A standard that lets a wallet or application make anonymized RPC requests by
 running untrusted, hash-pinned client code inside a sandboxed worker and
 granting it a small, explicit, transport-neutral capability API.

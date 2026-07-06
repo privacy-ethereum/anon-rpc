@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: impl
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: impl/package-lock.json
+
+      # Foundry: forge/anvil for the specifier subproject (contract tests and
+      # the publish-script e2e against a local anvil chain).
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      # Workspace tests: browser-harness unit suite (node --test) and the
+      # specifier suite (dotenv + github-resolver + forge + anvil publish).
+      - run: npm test
+
+      # Browser e2e: builds all workspaces, boots the in-process kps echo
+      # peer (@kpstreams/server), and drives headless Chromium — including
+      # real WebRTC to 127.0.0.1 and IndexedDB persistence across reloads.
+      - run: npx playwright install --with-deps chromium
+
+      - run: npm run test:e2e
