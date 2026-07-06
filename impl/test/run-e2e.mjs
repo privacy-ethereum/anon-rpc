@@ -4,7 +4,8 @@
 //   1. build the bundles
 //   2. compute the worker bundle's keccak hash and ABI-encode a mock specifier
 //      (workerHash() / workerResolvers()) so the §4 path runs for real
-//   3. start the Go kps echo server, capture its ip:port:certhash address
+//   3. start an in-process kps echo peer (@kpstreams/server, npm — no Go, no
+//      kps checkout) and format its ip:port:certhash address
 //   4. serve the page + dist assets + a /hello passthrough endpoint
 //   5. drive headless Chromium: instantiate AnonRpcWorker, await ready,
 //      exercise a plain-fetch passthrough AND a kps-routed echo, assert results
@@ -16,8 +17,8 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { chromium } from "playwright";
+import { listen } from "@kpstreams/server";
 
-const KPS_REPO = "/home/andrew/workspaces/kps";
 const HERE = new URL(".", import.meta.url).pathname;
 const ROOT = new URL("..", import.meta.url).pathname;
 
@@ -198,25 +199,58 @@ function run(cmd, args, opts) {
   });
 }
 
-function startKpsServer() {
-  return new Promise((resolve, reject) => {
-    const p = spawn(
-      "go",
-      ["run", "./libs/go/cmd/server", "-listen", "127.0.0.1:0", "-ip", "127.0.0.1", "-key", `${HERE}.tmp-kps.key`],
-      { cwd: KPS_REPO },
-    );
-    cleanups.push(() => p.kill("SIGKILL"));
-    let out = "";
-    const timer = setTimeout(() => reject(new Error("kps server did not print address in time")), 30000);
-    const onData = (buf) => {
-      out += buf.toString();
-      const m = out.match(/kps\.dial\("([^"]+)"\)/);
-      if (m) { clearTimeout(timer); resolve(m[1]); }
-    };
-    p.stdout.on("data", onData);
-    p.stderr.on("data", (b) => process.stderr.write(`  [kps] ${b}`));
-    p.on("exit", (code) => reject(new Error(`kps server exited early (${code})`)));
+// In-process kps echo peer via the published @kpstreams/server package —
+// mirrors the Go demo server's behaviour: echo every stream's bytes back
+// until the peer finishes its write half, then close.
+async function startKpsServer() {
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  const listener = await listen({
+    port,
+    address: "127.0.0.1",
+    certPath: `${HERE}.tmp-kps.cert`,
+    keyPath: `${HERE}.tmp-kps.key`,
   });
+  cleanups.push(() => void listener.close());
+
+  (async () => {
+    for (;;) {
+      let conn;
+      try {
+        conn = await listener.accept();
+      } catch {
+        return; // listener closed
+      }
+      (async () => {
+        for (;;) {
+          let stream;
+          try {
+            stream = await conn.acceptStream();
+          } catch {
+            return; // connection closed
+          }
+          echoStream(stream).catch(() => {});
+        }
+      })();
+    }
+  })();
+
+  return listener.address("127.0.0.1");
+}
+
+async function echoStream(stream) {
+  console.log("  [kps] new stream");
+  const reader = stream.readable.getReader();
+  const writer = stream.writable.getWriter();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      await writer.write(value);
+    }
+    await writer.close(); // FIN: peer observes EOF after the echoed bytes
+  } finally {
+    await stream.close().catch(() => {});
+  }
 }
 
 main().catch((e) => fail(e.stack || String(e)));

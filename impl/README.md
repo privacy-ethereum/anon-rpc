@@ -57,11 +57,10 @@ the worker never needs WebRTC itself — the harness owns the transport.
 
 ## Prerequisites
 
-- Node 18+ and Go 1.21+. The KPS client comes from npm
-  (`@kpstreams/webrtc-client`); a checkout of
-  [privacy-ethereum/kps](https://github.com/privacy-ethereum/kps) at `../../kps`
-  relative to this directory is still needed to run the Go echo peer in the e2e
-  test.
+- Node 20+. Everything KPS comes from npm: the harness uses
+  `@kpstreams/webrtc-client`, and the e2e runs its echo peer in-process via
+  `@kpstreams/server` — no Go toolchain or
+  [kps](https://github.com/privacy-ethereum/kps) checkout required.
 
 All commands below are run from this `impl/` directory.
 
