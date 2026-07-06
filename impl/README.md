@@ -15,6 +15,10 @@ worker, as two npm workspaces:
 - [test-worker/](test-worker/) — the worker the e2e drives: exercises the
   wider capability surface (KPS routing, persistent storage) on top of the
   passthrough behaviour.
+- [specifier/](specifier/) — the on-chain half of §4: the `WorkerSpecifier`
+  reference contract (Foundry) and the script that publishes a worker
+  on-chain (pins the bundle hash, verifies resolvers serve the bytes, deploys,
+  reads back).
 
 The harness runs untrusted, hash-pinned worker code inside a Web Worker in a null-origin
 sandboxed iframe (§6), and exposes the `AnonRpcWorkerApi` capability surface
@@ -65,6 +69,8 @@ the worker never needs WebRTC itself — the harness owns the transport.
 | [browser-harness/src/worker/anon-rpc-worker-api.ts](browser-harness/src/worker/anon-rpc-worker-api.ts) | Worker-side capability proxies |
 | [passthrough-worker/src/passthrough-worker.ts](passthrough-worker/src/passthrough-worker.ts) | The minimal §3.2 worker template: pure fetch passthrough (own copy of the worker-facing types) |
 | [test-worker/src/test-worker.ts](test-worker/src/test-worker.ts) | e2e worker: passthrough + kps+echo:// routing + persisted call counter |
+| [specifier/src/WorkerSpecifier.sol](specifier/src/WorkerSpecifier.sol) | §4 reference specifier contract (owner-updatable, renounceable) |
+| [specifier/publish-worker.mjs](specifier/publish-worker.mjs) | publish a worker on-chain: hash, verify resolvers, deploy, read back |
 
 ## Prerequisites
 
@@ -72,6 +78,9 @@ the worker never needs WebRTC itself — the harness owns the transport.
   `@kpstreams/webrtc-client`, and the e2e runs its echo peer in-process via
   `@kpstreams/server` — no Go toolchain or
   [kps](https://github.com/privacy-ethereum/kps) checkout required.
+- [Foundry](https://getfoundry.sh) only for the [specifier/](specifier/)
+  subproject (contract build/tests and on-chain publishing); everything else
+  works without it, and the specifier tests skip gracefully when it's absent.
 
 All commands below are run from this `impl/` directory.
 

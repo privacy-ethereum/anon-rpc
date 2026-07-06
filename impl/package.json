@@ -7,11 +7,12 @@
   "workspaces": [
     "browser-harness",
     "passthrough-worker",
-    "test-worker"
+    "test-worker",
+    "specifier"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
-    "typecheck": "npm run typecheck --workspaces",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:e2e": "node test/run-e2e.mjs"
   },
