@@ -4,9 +4,9 @@
 // the worker over the capability port. This is the whole point of the `kps`
 // capability (§10, draft rationale): worker code never touches WebRTC, so it is
 // not locked to the web. Connections and streams are referenced by opaque ids;
-// stream readable/writable are transferred to the worker (Chromium transfers
-// WHATWG streams), so byte flow + backpressure ride the platform pipe and only
-// lifecycle calls cross as RPC.
+// stream readable/writable are transferred to the worker (transferable
+// streams, per the WHATWG Streams standard), so byte flow + backpressure ride
+// the platform pipe and only lifecycle calls cross as RPC.
 
 import { dial, openStream } from "@kpstreams/webrtc-client";
 import type { Connection, Stream } from "@kpstreams/webrtc-client";

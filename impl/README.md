@@ -22,7 +22,7 @@ from the host to the worker.
 ## Architecture
 
 ```
- host page ─────────────────────────────┐
+ host page ───────────────────────────────┐
   AnonRpcWorker (§5)                      │  null-origin iframe (sandbox=allow-scripts)
    • reads specifier, verifies keccak     │   iframe-boot: blob-spawns the Worker,
      hash of bundle bytes (§4)            │   relays the entangled port
@@ -31,7 +31,7 @@ from the host to the worker.
    • exposes worker.fetch                 │   Web Worker
                                           │    worker-runtime (harness): builds
         MessageChannel port ──────────────┼──▶  anonRpcWorker, importScripts the
-        (relayed once through the iframe,  │     verified bundle
+        (relayed once through the iframe, │     verified bundle
          then host↔worker direct)         │    passthrough-worker (untrusted,
                                           │     hash-pinned): acceptCall loop,
                                           │     fetch passthrough, kps+echo://
@@ -40,8 +40,9 @@ from the host to the worker.
 
 The capability port carries a small request/response + event RPC
 ([browser-harness/src/protocol.ts](browser-harness/src/protocol.ts)). KPS stream byte flow rides **transferred**
-WHATWG `ReadableStream`/`WritableStream` objects (Chromium transfers them over a
-`MessagePort`), so backpressure is handled by the platform pipe and only
+WHATWG `ReadableStream`/`WritableStream` objects (transferable streams, per the
+Streams standard: the browser carries them over the `MessagePort`), so
+backpressure is handled by the platform pipe and only
 lifecycle calls (`closeWrite`, `cancelRead`, …) round-trip as RPC. This is why
 the worker never needs WebRTC itself — the harness owns the transport.
 
@@ -82,8 +83,9 @@ The e2e test ([test/run-e2e.mjs](test/run-e2e.mjs)) asserts, end to end:
 
 1. the iframe is null-origin (`sandbox="allow-scripts"`) — §6;
 2. a plain `worker.fetch()` passes through the boundary and returns the body;
-3. a `kps+echo://<addr>` fetch is routed over a **real KPS stream** to the Go
-   echo server and the bytes round-trip — proving the bridged transport.
+3. a `kps+echo://<addr>` fetch is routed over a **real KPS stream** to the
+   in-process echo peer and the bytes round-trip — proving the bridged
+   transport.
 
 The §4 integrity path is real: the mock specifier returns an ABI-encoded
 `workerHash()`/`workerResolvers()`, the harness fetches the bundle and rejects
