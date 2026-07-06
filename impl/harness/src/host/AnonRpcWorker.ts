@@ -4,15 +4,12 @@
 // §6 isolation (Web Worker inside a null-origin sandboxed iframe), implement the
 // capability API for the worker, and expose `fetch` to the host.
 
-import type {
-  WorkerInit,
-  AnonRequestInit,
-  AnonFetchResponse,
-  HeaderList,
-} from "../spec-types.js";
+import type { WorkerInit, AnonFetchResponse } from "../spec-types.js";
 import { PortRpc, RpcError } from "../protocol.js";
 import { readSpecifier, fetchAndVerifyBundle } from "./specifier.js";
 import { registerKpsBridge } from "./kps-bridge-host.js";
+import { CallQueue } from "./call-queue.js";
+import { normalizeRequest, type WireRequestInit } from "./normalize-request.js";
 
 // Injected at build time (see build.mjs): source text the null-origin iframe
 // blob-spawns, since an opaque-origin iframe cannot load host-origin scripts.
@@ -28,22 +25,15 @@ function storeFor(address: string): Map<string, Uint8Array> {
   return m;
 }
 
-type WireRequestInit = {
-  method?: string;
-  headers?: HeaderList;
-  body?: Uint8Array | ReadableStream<Uint8Array>;
-  redirect?: AnonRequestInit["redirect"];
-  hasSignal?: boolean;
-};
-
 type CallRecord = {
   callId: number;
   url: string;
   requestInit?: WireRequestInit;
   bodyTransfer?: Transferable[];
-  hostSignal?: AbortSignal;
   resolve: (r: Response) => void;
   reject: (e: unknown) => void;
+  // Detaches the host-signal abort listener; called when the call settles.
+  cleanup?: () => void;
 };
 
 export class AnonRpcWorker {
@@ -56,9 +46,8 @@ export class AnonRpcWorker {
   #disposeKps?: () => void;
   #onWindowMessage?: (ev: MessageEvent) => void;
 
-  // FIFO of calls awaiting acceptCall (§8: ordered, no drop, backpressured).
-  #queue: CallRecord[] = [];
-  #waiter?: { resolve: (c: CallRecord) => void; reject: (e: unknown) => void; signal?: AbortSignal };
+  // Calls awaiting acceptCall (§8: ordered, no drop, backpressured).
+  #queue = new CallQueue<CallRecord>();
   #calls = new Map<number, CallRecord>();
   #nextCallId = 1;
   #readyResolve!: () => void;
@@ -70,6 +59,10 @@ export class AnonRpcWorker {
       this.#readyResolve = res;
       this.#readyReject = rej;
     });
+    // A caller need not await `ready` (e.g. close() before boot finishes);
+    // this branch absorbs the rejection so it is never "unhandled", while
+    // awaiting callers still observe it.
+    this.ready.catch(() => {});
     // §5: `fetch` MUST be this-bound so it works as a free function.
     this.fetch = this.#fetch.bind(this);
     this.#boot().catch((e) => this.#readyReject(e));
@@ -97,6 +90,11 @@ export class AnonRpcWorker {
       const onMessage = (ev: MessageEvent) => {
         if (ev.source !== iframe.contentWindow) return;
         if (ev.data?.kind === "iframe-ready") resolve();
+        // Worker script-level errors (e.g. the runtime itself failing) must
+        // surface instead of leaving `ready` pending forever.
+        if (ev.data?.kind === "worker-error") {
+          this.#readyReject(new Error(`worker error: ${ev.data.message}`));
+        }
       };
       this.#onWindowMessage = onMessage;
       window.addEventListener("message", onMessage);
@@ -118,13 +116,19 @@ export class AnonRpcWorker {
 
     rpc.onEvent("ready", () => this.#readyResolve());
 
+    // The worker runtime reports a bundle that failed to load (§4-valid bytes
+    // can still throw at top level); without this, `ready` would hang.
+    rpc.onEvent("boot-error", ({ message }: { message: string }) => {
+      this.#readyReject(new Error(`worker bundle failed to load: ${message}`));
+    });
+
     rpc.onEvent("log", ({ level, args }: { level: string; args: unknown[] }) => {
       const fn = (console as any)[level] ?? console.log;
       fn.call(console, "[worker]", ...args.map(renderLogArg));
     });
 
     rpc.on("acceptCall", async (_args, { signal }) => {
-      const rec = await this.#takeCall(signal);
+      const rec = await this.#queue.take(signal);
       const value = {
         callId: rec.callId,
         url: rec.url,
@@ -137,13 +141,24 @@ export class AnonRpcWorker {
       callId: number;
       ok: boolean;
       response?: AnonFetchResponse;
-      error?: { message: string };
+      error?: { name?: string; message?: string; code?: string };
     }) => {
       const rec = this.#calls.get(msg.callId);
-      if (!rec) throw new Error(`respond for unknown callId ${msg.callId}`);
+      // Unknown callId is expected when the host aborted the call after the
+      // worker had already accepted it — the late respond is dropped quietly.
+      if (!rec) return { value: undefined };
       this.#calls.delete(msg.callId);
-      if (msg.ok && msg.response) rec.resolve(toResponse(msg.response));
-      else rec.reject(new Error(msg.error?.message ?? "worker failed the call"));
+      rec.cleanup?.();
+      if (msg.ok && msg.response) {
+        rec.resolve(toResponse(msg.response));
+      } else {
+        // Preserve name/code across the boundary (§12: message is diagnostic
+        // only; code is what host logic may branch on).
+        const err = new Error(msg.error?.message ?? "worker failed the call");
+        if (msg.error?.name) err.name = msg.error.name;
+        if (msg.error?.code) (err as { code?: string }).code = msg.error.code;
+        rec.reject(err);
+      }
       return { value: undefined };
     });
 
@@ -168,31 +183,9 @@ export class AnonRpcWorker {
     });
   }
 
-  #takeCall(signal: AbortSignal): Promise<CallRecord> {
-    const next = this.#queue.shift();
-    if (next) return Promise.resolve(next);
-    return new Promise<CallRecord>((resolve, reject) => {
-      const onAbort = () => reject(signal.reason ?? new DOMException("aborted", "AbortError"));
-      if (signal.aborted) return onAbort();
-      signal.addEventListener("abort", onAbort, { once: true });
-      this.#waiter = { resolve, reject, signal };
-    });
-  }
-
-  #enqueue(rec: CallRecord): void {
-    if (this.#waiter) {
-      const w = this.#waiter;
-      this.#waiter = undefined;
-      w.resolve(rec);
-    } else {
-      this.#queue.push(rec);
-    }
-  }
-
   async #fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-    const { url, requestInit, transfer } = await normalizeRequest(input, init);
+    const { url, requestInit, transfer, signal: hostSignal } = await normalizeRequest(input, init);
     const callId = this.#nextCallId++;
-    const hostSignal = (init?.signal ?? undefined) as AbortSignal | undefined;
 
     return new Promise<Response>((resolve, reject) => {
       const rec: CallRecord = {
@@ -200,7 +193,6 @@ export class AnonRpcWorker {
         url,
         requestInit,
         bodyTransfer: transfer,
-        ...(hostSignal ? { hostSignal } : {}),
         resolve,
         reject,
       };
@@ -208,13 +200,22 @@ export class AnonRpcWorker {
 
       if (hostSignal) {
         const onAbort = () => {
-          this.#rpc?.emit("call-abort", { callId });
-          if (this.#calls.delete(callId)) reject(hostSignal.reason ?? new DOMException("aborted", "AbortError"));
+          // Not yet delivered: withdraw it from the queue so the worker never
+          // sees a dead call. Already delivered: tell the worker to abort it.
+          if (!this.#queue.remove(rec)) this.#rpc?.emit("call-abort", { callId });
+          if (this.#calls.delete(callId)) {
+            reject(hostSignal.reason ?? new DOMException("aborted", "AbortError"));
+          }
         };
-        if (hostSignal.aborted) return onAbort();
+        if (hostSignal.aborted) {
+          this.#calls.delete(callId);
+          reject(hostSignal.reason ?? new DOMException("aborted", "AbortError"));
+          return;
+        }
         hostSignal.addEventListener("abort", onAbort, { once: true });
+        rec.cleanup = () => hostSignal.removeEventListener("abort", onAbort);
       }
-      this.#enqueue(rec);
+      this.#queue.push(rec);
     });
   }
 
@@ -223,60 +224,19 @@ export class AnonRpcWorker {
     if (this.#onWindowMessage) window.removeEventListener("message", this.#onWindowMessage);
     this.#iframe?.remove();
     const err = new Error("worker closed");
-    for (const rec of this.#calls.values()) rec.reject(err);
+    this.#readyReject(err); // no-op if ready already resolved
+    for (const rec of this.#calls.values()) {
+      rec.cleanup?.();
+      rec.reject(err);
+    }
     this.#calls.clear();
-    this.#waiter?.reject(err);
+    this.#queue.rejectAll(err);
   }
 }
 
 function renderLogArg(a: unknown): unknown {
   if (a instanceof Uint8Array) return `<${a.byteLength} bytes>`;
   return a;
-}
-
-function headersToList(h: HeadersInit | undefined): HeaderList | undefined {
-  if (!h) return undefined;
-  const out: HeaderList = [];
-  if (h instanceof Headers) h.forEach((v, k) => out.push([k, v]));
-  else if (Array.isArray(h)) for (const [k, v] of h) out.push([k, v]);
-  else for (const [k, v] of Object.entries(h)) out.push([k, String(v)]);
-  return out;
-}
-
-async function normalizeRequest(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<{ url: string; requestInit?: WireRequestInit; transfer?: Transferable[] }> {
-  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (!init && typeof input !== "object") return { url };
-
-  const src = init ?? {};
-  const transfer: Transferable[] = [];
-  let body: WireRequestInit["body"];
-  if (src.body != null) {
-    if (src.body instanceof ReadableStream) {
-      body = src.body;
-      transfer.push(src.body as unknown as Transferable);
-    } else if (typeof src.body === "string") {
-      body = new TextEncoder().encode(src.body);
-    } else if (src.body instanceof Uint8Array) {
-      body = src.body;
-    } else if (src.body instanceof ArrayBuffer) {
-      body = new Uint8Array(src.body);
-    } else {
-      body = new Uint8Array(await new Response(src.body as BodyInit).arrayBuffer());
-    }
-  }
-
-  const requestInit: WireRequestInit = {};
-  if (src.method) requestInit.method = src.method;
-  const headers = headersToList(src.headers);
-  if (headers) requestInit.headers = headers;
-  if (body !== undefined) requestInit.body = body;
-  if (src.redirect) requestInit.redirect = src.redirect;
-  if (src.signal) requestInit.hasSignal = true;
-
-  return { url, requestInit, transfer };
 }
 
 function toResponse(r: AnonFetchResponse): Response {

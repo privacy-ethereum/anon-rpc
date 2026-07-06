@@ -27,6 +27,9 @@ addEventListener("message", function onInit(ev: MessageEvent) {
       URL.createObjectURL(blob),
     );
   } catch (err) {
-    api.log.error("worker bundle failed to load:", (err as Error)?.message ?? String(err));
+    const message = (err as Error)?.message ?? String(err);
+    api.log.error("worker bundle failed to load:", message);
+    // The host rejects `ready` on this; logging alone would leave it hanging.
+    rpc.emit("boot-error", { message });
   }
 });

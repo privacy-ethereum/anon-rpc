@@ -6,13 +6,15 @@
   "description": "anon-rpc harness: loads a hash-pinned worker under §6 isolation and implements the capability API (SPEC.md §3.1).",
   "scripts": {
     "build": "node build.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p test --noEmit",
+    "test": "node test/run.mjs"
   },
   "dependencies": {
     "@kpstreams/webrtc-client": "^0.1.0",
     "@noble/hashes": "^1.5.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0"
   }

@@ -133,8 +133,36 @@ async function main() {
       const r2 = await w.fetch(`kps+echo://${cfg.kpsAddr}`, { method: "POST", body: payload });
       const echoed = await r2.text();
 
+      // Request-object input: method/headers/body must be honored, not
+      // silently downgraded to a bare GET.
+      const r3 = await w.fetch(
+        new Request(`${cfg.origin}/echo`, { method: "POST", body: "via-request-object" }),
+      );
+      const echoedReq = await r3.text();
+
+      // A ReadableStream body is transferred across the boundary intact.
+      const r4 = await w.fetch(`kps+echo://${cfg.kpsAddr}`, {
+        method: "POST",
+        body: new Blob(["stream-body-via-kps"]).stream(),
+      });
+      const echoedStream = await r4.text();
+
+      // A pre-aborted fetch rejects with AbortError and must not disturb the
+      // call queue for subsequent fetches.
+      let abortName = "";
+      try {
+        await w.fetch(`${cfg.origin}/hello`, { signal: AbortSignal.abort() });
+      } catch (e) {
+        abortName = e?.name ?? String(e);
+      }
+      const r5 = await w.fetch(`${cfg.origin}/hello`);
+      const afterAbort = await r5.text();
+
       w.close();
-      return { sandbox, passthrough, echoed, sentPayload: payload };
+      return {
+        sandbox, passthrough, echoed, sentPayload: payload,
+        echoedReq, echoedStream, abortName, afterAbort,
+      };
     },
     { ethCallMap, specifierAddress: "0xabc0000000000000000000000000000000000001", kpsAddr, origin },
   );
@@ -143,6 +171,10 @@ async function main() {
   check("iframe sandbox is allow-scripts only (§6)", result.sandbox, "allow-scripts");
   check("plain fetch passthrough body", result.passthrough, `hello from ${origin}`);
   check("kps-routed echo round-trips bytes", result.echoed, result.sentPayload);
+  check("Request-object POST body honored (§5)", result.echoedReq, "via-request-object");
+  check("ReadableStream body transfers across the boundary", result.echoedStream, "stream-body-via-kps");
+  check("pre-aborted fetch rejects with AbortError", result.abortName, "AbortError");
+  check("fetch after an aborted fetch still works (§8 no-drop)", result.afterAbort, `hello from ${origin}`);
 
   console.log("\n✅ all e2e assertions passed");
   cleanup();
@@ -161,6 +193,12 @@ async function main() {
       if (url === "/dist/host.js") return send(res, 200, "text/javascript", hostBundle);
       if (url === "/dist/passthrough-worker.js") return send(res, 200, "text/javascript", workerBundle);
       if (url === "/hello") return send(res, 200, "text/plain", `hello from ${originRef.value}`);
+      if (url === "/echo" && req.method === "POST") {
+        const chunks = [];
+        req.on("data", (c) => chunks.push(c));
+        req.on("end", () => send(res, 200, "application/octet-stream", Buffer.concat(chunks)));
+        return;
+      }
       send(res, 404, "text/plain", "not found");
     });
     await new Promise((r) => server.listen(0, "127.0.0.1", r));

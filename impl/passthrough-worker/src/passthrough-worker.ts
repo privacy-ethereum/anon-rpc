@@ -71,19 +71,26 @@ async function kpsEcho(addr: string, init?: AnonRequestInit): Promise<AnonFetchR
 }
 
 async function passthrough(url: string, init?: AnonRequestInit): Promise<AnonFetchResponse> {
-  const resp = await fetch(url, toFetchInit(init));
+  const resp = await fetch(url, await toFetchInit(init));
   const buf = new Uint8Array(await resp.arrayBuffer());
   const headers: HeaderList = [];
   resp.headers.forEach((v, k) => headers.push([k, v]));
   return { status: resp.status, headers, body: buf, url: resp.url };
 }
 
-function toFetchInit(init?: AnonRequestInit): RequestInit | undefined {
+async function toFetchInit(init?: AnonRequestInit): Promise<RequestInit | undefined> {
   if (!init) return undefined;
   const out: RequestInit = {};
   if (init.method) out.method = init.method;
   if (init.headers) out.headers = init.headers as [string, string][];
-  if (init.body) out.body = init.body as BodyInit;
+  if (init.body) {
+    // A streaming body is buffered before handing it to fetch: Chromium
+    // rejects stream bodies without `duplex: "half"`, and even with it only
+    // supports upload streaming over HTTP/2 — buffering works everywhere.
+    // A worker that wants true streaming uploads can pass the stream through
+    // with { duplex: "half" } and accept the h2 requirement.
+    out.body = init.body instanceof ReadableStream ? ((await readAll(init.body)) as BodyInit) : (init.body as BodyInit);
+  }
   if (init.redirect) out.redirect = init.redirect;
   if (init.signal) out.signal = init.signal;
   return out;

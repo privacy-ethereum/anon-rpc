@@ -1,0 +1,115 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { keccak_256 } from "@noble/hashes/sha3";
+import { readSpecifier, fetchAndVerifyBundle, toHex } from "../src/host/specifier.js";
+
+/* ABI encoders mirroring the decoders under test (same as test/run-e2e.mjs). */
+const enc = new TextEncoder();
+function pad32(b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(Math.ceil(b.length / 32) * 32 || 32);
+  out.set(b);
+  return out;
+}
+function word(n: number): Uint8Array {
+  const out = new Uint8Array(32);
+  for (let i = 31; i >= 0 && n > 0; i--) {
+    out[i] = n & 0xff;
+    n = Math.floor(n / 256);
+  }
+  return out;
+}
+function concat(arrs: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(arrs.reduce((s, a) => s + a.length, 0));
+  let off = 0;
+  for (const a of arrs) {
+    out.set(a, off);
+    off += a.length;
+  }
+  return out;
+}
+function encodeStringArray(strings: string[]): Uint8Array {
+  const items = strings.map((s) => enc.encode(s));
+  const heads: Uint8Array[] = [];
+  const tails: Uint8Array[] = [];
+  let tailOffset = items.length * 32;
+  for (const item of items) {
+    heads.push(word(tailOffset));
+    const tail = concat([word(item.length), pad32(item)]);
+    tails.push(tail);
+    tailOffset += tail.length;
+  }
+  return concat([word(0x20), word(items.length), ...heads, ...tails]);
+}
+const selector = (sig: string) => "0x" + toHex(keccak_256(enc.encode(sig))).slice(0, 8);
+
+function mockProvider(map: Record<string, string>) {
+  return {
+    request: async ({ method, params }: { method: string; params?: unknown[] }) => {
+      assert.equal(method, "eth_call");
+      const data = (params as [{ data: string }])[0].data;
+      const ret = map[data.slice(0, 10)];
+      if (!ret) throw new Error(`no mock for ${data}`);
+      return ret;
+    },
+  };
+}
+
+test("readSpecifier decodes workerHash and workerResolvers", async () => {
+  const hash = "0x" + "ab".repeat(32);
+  const resolvers = ["https://a.test/w.js", "https://mirror.test/some/longer/path/w.js"];
+  const provider = mockProvider({
+    [selector("workerHash()")]: hash,
+    [selector("workerResolvers()")]: "0x" + toHex(encodeStringArray(resolvers)),
+  });
+  const spec = await readSpecifier(provider, "0x" + "01".repeat(20));
+  assert.equal(spec.workerHash, hash);
+  assert.deepEqual(spec.resolvers, resolvers);
+});
+
+// fetchAndVerifyBundle uses global fetch; substitute a scripted one per test.
+async function withFetch<T>(impl: typeof fetch, fn: () => Promise<T>): Promise<T> {
+  const orig = globalThis.fetch;
+  globalThis.fetch = impl;
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = orig;
+  }
+}
+
+const bundle = enc.encode("// the worker bundle bytes");
+const bundleHash = "0x" + toHex(keccak_256(bundle));
+
+test("fetchAndVerifyBundle accepts hash-matching bytes", async () => {
+  await withFetch(async () => new Response(bundle), async () => {
+    const got = await fetchAndVerifyBundle({ workerHash: bundleHash, resolvers: ["https://r.test/w.js"] });
+    assert.deepEqual(got, bundle);
+  });
+});
+
+test("fetchAndVerifyBundle rejects non-matching bytes (§4)", async () => {
+  await withFetch(async () => new Response(enc.encode("evil bytes")), async () => {
+    await assert.rejects(
+      fetchAndVerifyBundle({ workerHash: bundleHash, resolvers: ["https://r.test/w.js"] }),
+      /hash mismatch/,
+    );
+  });
+});
+
+test("fetchAndVerifyBundle falls through failing resolvers to a good one", async () => {
+  const calls: string[] = [];
+  const impl: typeof fetch = async (url) => {
+    calls.push(String(url));
+    if (calls.length === 1) return new Response("nope", { status: 500 });
+    if (calls.length === 2) return new Response(enc.encode("wrong bytes"));
+    return new Response(bundle);
+  };
+  await withFetch(impl, async () => {
+    const got = await fetchAndVerifyBundle({
+      workerHash: bundleHash,
+      resolvers: ["https://down.test/w.js", "https://tampered.test/w.js", "https://good.test/w.js"],
+    });
+    assert.deepEqual(got, bundle);
+    assert.equal(calls.length, 3);
+  });
+});

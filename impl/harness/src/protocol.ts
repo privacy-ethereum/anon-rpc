@@ -51,7 +51,7 @@ export class PortRpc {
   #nextId = 1;
   #pending = new Map<
     number,
-    { resolve: (v: unknown) => void; reject: (e: unknown) => void }
+    { resolve: (v: unknown) => void; reject: (e: unknown) => void; cleanup?: () => void }
   >();
   #handlers = new Map<string, Handler>();
   #events = new Map<string, EventHandler>();
@@ -83,25 +83,29 @@ export class PortRpc {
   call<T = unknown>(method: string, args?: unknown, opts?: CallOptions): Promise<T> {
     const id = this.#nextId++;
     return new Promise<T>((resolve, reject) => {
-      this.#pending.set(id, {
-        resolve: resolve as (v: unknown) => void,
-        reject,
-      });
+      let cleanup: (() => void) | undefined;
       if (opts?.signal) {
         const signal = opts.signal;
         if (signal.aborted) {
-          this.#pending.delete(id);
           reject(abortError());
           return;
         }
-        signal.addEventListener(
-          "abort",
-          () => {
-            if (this.#pending.has(id)) this.#post({ t: "abort", id });
-          },
-          { once: true },
-        );
+        // Abort rejects locally as well as notifying the peer — the caller must
+        // not stay blocked on a peer that never answers (that unresponsiveness
+        // is exactly what abort is for). A late "res" is then ignored.
+        const onAbort = () => {
+          if (!this.#pending.delete(id)) return;
+          this.#post({ t: "abort", id });
+          reject(abortError());
+        };
+        signal.addEventListener("abort", onAbort);
+        cleanup = () => signal.removeEventListener("abort", onAbort);
       }
+      this.#pending.set(id, {
+        resolve: resolve as (v: unknown) => void,
+        reject,
+        cleanup,
+      });
       this.#post({ t: "req", id, method, args }, opts?.transfer);
     });
   }
@@ -122,8 +126,9 @@ export class PortRpc {
       }
       case "res": {
         const p = this.#pending.get(msg.id);
-        if (!p) return;
+        if (!p) return; // late response for an aborted call
         this.#pending.delete(msg.id);
+        p.cleanup?.();
         if (msg.ok) p.resolve(msg.value);
         else p.reject(new RpcError(msg.error));
         return;

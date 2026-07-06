@@ -10,8 +10,12 @@
 (() => {
   parent.postMessage({ kind: "iframe-ready" }, "*");
 
-  addEventListener("message", (ev: MessageEvent) => {
-    if (ev.data?.kind !== "init") return;
+  // This handler sits at the §6 isolation boundary: only the parent (the
+  // harness) may init, and only once — any other co-embedded frame can reach
+  // this window and postMessage into it.
+  const onInit = (ev: MessageEvent) => {
+    if (ev.source !== parent || ev.data?.kind !== "init") return;
+    removeEventListener("message", onInit);
     const port = ev.ports[0];
     const runtimeSource: string = ev.data.runtimeSource;
     const bundleBytes: Uint8Array = ev.data.bundleBytes;
@@ -26,5 +30,6 @@
     worker.addEventListener("error", (e) => {
       parent.postMessage({ kind: "worker-error", message: e.message }, "*");
     });
-  });
+  };
+  addEventListener("message", onInit);
 })();

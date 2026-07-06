@@ -70,7 +70,8 @@ All commands below are run from this `impl/` directory.
 npm install            # installs both workspaces
 npm run build          # harness/dist/{host,worker-runtime,iframe-boot}.js + passthrough-worker/dist/passthrough-worker.js
 npm run typecheck      # tsc --noEmit in each workspace
-npm run test:e2e       # builds, starts the Go kps echo server, drives headless Chromium
+npm test               # unit tests (node --test): protocol, call queue, request normalization, specifier, worker API
+npm run test:e2e       # builds, starts the in-process kps echo peer, drives headless Chromium
 ```
 
 The e2e test ([test/run-e2e.mjs](test/run-e2e.mjs)) asserts, end to end:

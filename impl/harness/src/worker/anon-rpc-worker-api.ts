@@ -29,10 +29,15 @@ type StreamParts = {
 
 export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
   // AbortControllers for delivered calls; host emits "call-abort" when its
-  // fetch caller aborts (the call's signal originates host-side).
+  // fetch caller aborts (the call's signal originates host-side). An abort can
+  // race the acceptCall response across the port, so aborts for calls not yet
+  // registered are remembered and applied on delivery.
   const callAborts = new Map<number, AbortController>();
+  const preAborted = new Set<number>();
   rpc.onEvent("call-abort", ({ callId }: { callId: number }) => {
-    callAborts.get(callId)?.abort(new DOMException("aborted", "AbortError"));
+    const ac = callAborts.get(callId);
+    if (ac) ac.abort(new DOMException("aborted", "AbortError"));
+    else preAborted.add(callId);
   });
 
   function makeStream(p: StreamParts): KpsStream {
@@ -76,12 +81,12 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
   };
 
   const storage: StorageApi = {
-    get: (key) => rpc.call("storage.get", { key }),
-    set: (key, value) => rpc.call("storage.set", { key, value }),
-    delete: (key) => rpc.call("storage.delete", { key }),
-    has: (key) => rpc.call("storage.has", { key }),
-    clear: (opts) => rpc.call("storage.clear", { prefix: opts?.prefix }),
-    list: (opts) => listKeys(rpc, opts?.prefix),
+    get: (key, opts) => rpc.call("storage.get", { key }, sigOpt(opts)),
+    set: (key, value, opts) => rpc.call("storage.set", { key, value }, sigOpt(opts)),
+    delete: (key, opts) => rpc.call("storage.delete", { key }, sigOpt(opts)),
+    has: (key, opts) => rpc.call("storage.has", { key }, sigOpt(opts)),
+    clear: (opts) => rpc.call("storage.clear", { prefix: opts?.prefix }, sigOpt(opts)),
+    list: (opts) => listKeys(rpc, opts?.prefix, opts?.signal),
   };
 
   const log: LogApi = {
@@ -99,7 +104,7 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
         url: string;
         requestInit?: AnonRequestInit & { hasSignal?: boolean };
       }>("acceptCall", {}, sigOpt(opts));
-      return makeFetchCall(rpc, callAborts, callId, url, requestInit);
+      return makeFetchCall(rpc, callAborts, preAborted, callId, url, requestInit);
     },
     kps,
     storage,
@@ -110,6 +115,7 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
 function makeFetchCall(
   rpc: PortRpc,
   callAborts: Map<number, AbortController>,
+  preAborted: Set<number>,
   callId: number,
   url: string,
   wireInit?: AnonRequestInit & { hasSignal?: boolean },
@@ -122,6 +128,8 @@ function makeFetchCall(
       const ac = new AbortController();
       callAborts.set(callId, ac);
       requestInit = { ...rest, signal: ac.signal };
+      // The host's abort may have crossed the port before this call arrived.
+      if (preAborted.delete(callId)) ac.abort(new DOMException("aborted", "AbortError"));
     }
   }
 
@@ -139,15 +147,30 @@ function makeFetchCall(
           return rpc.call("respond", { callId, ok: true, response: r }, { transfer });
         })
         .catch((e: unknown) =>
-          rpc.call("respond", { callId, ok: false, error: { message: (e as Error)?.message ?? String(e) } }),
+          // Carry name/code across the boundary (§12): host logic may branch
+          // on code, never on message text.
+          rpc.call("respond", { callId, ok: false, error: serializeRespondError(e) }),
         )
+        .catch(() => {}) // the failure respond itself may be refused (e.g. call already aborted)
         .finally(() => callAborts.delete(callId));
     },
   };
 }
 
-async function* listKeys(rpc: PortRpc, prefix?: string): AsyncIterable<StorageKey> {
-  const keys = await rpc.call<StorageKey[]>("storage.list", { prefix });
+function serializeRespondError(e: unknown): { name?: string; message: string; code?: string } {
+  if (e instanceof Error) {
+    const code = (e as { code?: unknown }).code;
+    return {
+      name: e.name,
+      message: e.message,
+      ...(typeof code === "string" ? { code } : {}),
+    };
+  }
+  return { message: String(e) };
+}
+
+async function* listKeys(rpc: PortRpc, prefix?: string, signal?: AbortSignal): AsyncIterable<StorageKey> {
+  const keys = await rpc.call<StorageKey[]>("storage.list", { prefix }, signal ? { signal } : undefined);
   for (const k of keys) yield k;
 }
 

@@ -11,6 +11,7 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "typecheck": "npm run typecheck --workspaces",
+    "test": "npm run test --workspaces --if-present",
     "test:e2e": "node test/run-e2e.mjs"
   },
   "devDependencies": {
