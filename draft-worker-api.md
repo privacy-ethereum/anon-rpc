@@ -190,13 +190,22 @@ export interface KpsConn {
   close(reason?: KpsReason): Promise<void>
 
   /**
-   * Connection-level unreliable datagrams.
+   * Send one unreliable unordered message. The promise resolving means the
+   * harness accepted it for best-effort sending, not that the peer received it.
    *
-   * Always present: every connection supports datagrams, so worker code does
-   * not need to feature-detect. Datagrams are separate from streams —
-   * unreliable, unordered, message-oriented, and size-limited.
+   * Datagram support is always present: every connection supports datagrams,
+   * so worker code does not need to feature-detect. Datagrams are separate
+   * from streams — unreliable, unordered, message-oriented, and size-limited.
    */
-  readonly datagrams: KpsDatagrams
+  sendDatagram(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>
+
+  /**
+   * Receive the next inbound datagram. While no receive is pending, the
+   * harness buffers inbound datagrams in a bounded buffer with a defined
+   * overflow policy (for example, drop-oldest when full) — dropping is
+   * acceptable because datagrams are unreliable.
+   */
+  receiveDatagram(opts?: { signal?: AbortSignal }): Promise<Uint8Array>
 
   /**
    * Resolves when the connection is closed by either side or fails.
@@ -292,24 +301,6 @@ export interface KpsConnCloseInfo {
 export interface KpsStreamCloseInfo {
   ok: boolean
   reason?: KpsReason
-}
-
-export interface KpsDatagrams {
-  /** Maximum payload size currently allowed for one datagram. May be conservative; larger sends must fail. */
-  readonly maxSize: number
-
-  /**
-   * Send one unreliable unordered message. The promise resolving means the
-   * harness accepted it for best-effort sending, not that the peer received it.
-   */
-  send(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>
-
-  /**
-   * Inbound datagrams. Because datagrams arrive unsolicited, delivery must be
-   * defined against a bounded buffer (for example, drop-oldest when full)
-   * rather than a single racing receive call.
-   */
-  readonly incoming: ReadableStream<Uint8Array>
 }
 
 /* Storage */

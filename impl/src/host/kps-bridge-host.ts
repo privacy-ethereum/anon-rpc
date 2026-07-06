@@ -8,7 +8,8 @@
 // WHATWG streams), so byte flow + backpressure ride the platform pipe and only
 // lifecycle calls cross as RPC.
 
-import { dial, openStream, Connection, Stream } from "@kps/client";
+import { dial, openStream } from "@kpstreams/webrtc-client";
+import type { Connection, Stream } from "@kpstreams/webrtc-client";
 import type { KpsReason } from "../spec-types.js";
 import type { PortRpc, RpcResult } from "../protocol.js";
 
@@ -39,18 +40,15 @@ export function registerKpsBridge(rpc: PortRpc): () => void {
     return s;
   };
 
-  rpc.on("kps.dial", async ({ addr, opts }, { signal }) => {
-    const c = await dial(addr, { ...opts, signal });
+  rpc.on("kps.dial", async ({ addr }, { signal }) => {
+    const c = await dial(addr, { signal });
     const connId = nextId++;
     conns.set(connId, c);
-    return {
-      value: { connId, datagramsIncoming: c.datagrams.incoming },
-      transfer: [c.datagrams.incoming as unknown as Transferable],
-    };
+    return { value: { connId } };
   });
 
-  rpc.on("kps.openStream", async ({ addr, opts }, { signal }) => {
-    const s = await openStream(addr, { ...opts, signal });
+  rpc.on("kps.openStream", async ({ addr }, { signal }) => {
+    const s = await openStream(addr, { signal });
     return addStream(s);
   });
 
@@ -72,9 +70,13 @@ export function registerKpsBridge(rpc: PortRpc): () => void {
     return { value: await conn(connId).closed };
   });
 
-  rpc.on("conn.dgram.send", async ({ connId, data }, { signal }) => {
-    await conn(connId).datagrams.send(data, { signal });
+  rpc.on("conn.sendDatagram", async ({ connId, data }, { signal }) => {
+    await conn(connId).sendDatagram(data, { signal });
     return { value: undefined };
+  });
+
+  rpc.on("conn.receiveDatagram", async ({ connId }, { signal }) => {
+    return { value: await conn(connId).receiveDatagram({ signal }) };
   });
 
   rpc.on("stream.closeWrite", async ({ streamId }) => {

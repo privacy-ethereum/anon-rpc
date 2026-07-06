@@ -14,7 +14,6 @@ import type {
   KpsConnCloseInfo,
   KpsStreamCloseInfo,
   KpsReason,
-  KpsDialOptions,
   StorageApi,
   StorageKey,
   LogApi,
@@ -51,7 +50,7 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
     };
   }
 
-  function makeConn(connId: number, datagramsIncoming: ReadableStream<Uint8Array>): KpsConn {
+  function makeConn(connId: number): KpsConn {
     let closed: Promise<KpsConnCloseInfo> | undefined;
     return {
       openStream: async (opts) =>
@@ -59,10 +58,8 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
       acceptStream: async (opts) =>
         makeStream(await rpc.call<StreamParts>("conn.acceptStream", { connId }, sigOpt(opts))),
       close: (reason?: KpsReason) => rpc.call("conn.close", { connId, reason }),
-      datagrams: {
-        send: (data, opts) => rpc.call("conn.dgram.send", { connId, data }, sigOpt(opts)),
-        incoming: datagramsIncoming,
-      },
+      sendDatagram: (data, opts) => rpc.call("conn.sendDatagram", { connId, data }, sigOpt(opts)),
+      receiveDatagram: (opts) => rpc.call<Uint8Array>("conn.receiveDatagram", { connId }, sigOpt(opts)),
       get closed() {
         return (closed ??= rpc.call<KpsConnCloseInfo>("conn.awaitClosed", { connId }));
       },
@@ -71,14 +68,11 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
 
   const kps: KpsApi = {
     dial: async (addr, opts) => {
-      const { connId, datagramsIncoming } = await rpc.call<{
-        connId: number;
-        datagramsIncoming: ReadableStream<Uint8Array>;
-      }>("kps.dial", { addr, opts: serializeDialOpts(opts) }, sigOpt(opts));
-      return makeConn(connId, datagramsIncoming);
+      const { connId } = await rpc.call<{ connId: number }>("kps.dial", { addr }, sigOpt(opts));
+      return makeConn(connId);
     },
     openStream: async (addr, opts) =>
-      makeStream(await rpc.call<StreamParts>("kps.openStream", { addr, opts: serializeDialOpts(opts) }, sigOpt(opts))),
+      makeStream(await rpc.call<StreamParts>("kps.openStream", { addr }, sigOpt(opts))),
   };
 
   const storage: StorageApi = {
@@ -155,11 +149,6 @@ function makeFetchCall(
 async function* listKeys(rpc: PortRpc, prefix?: string): AsyncIterable<StorageKey> {
   const keys = await rpc.call<StorageKey[]>("storage.list", { prefix });
   for (const k of keys) yield k;
-}
-
-function serializeDialOpts(opts?: KpsDialOptions): { timeoutMs?: number } | undefined {
-  if (opts?.timeoutMs == null) return undefined;
-  return { timeoutMs: opts.timeoutMs };
 }
 
 function sigOpt(opts?: { signal?: AbortSignal }): { signal?: AbortSignal } | undefined {

@@ -63,7 +63,7 @@ export type AnonFetchResponse = {
 
 export type KpsAddr = string; // "<ip>:<port>:<certhash>"
 
-export type KpsDialOptions = { signal?: AbortSignal; timeoutMs?: number };
+export type KpsDialOptions = { signal?: AbortSignal };
 export type KpsOpenStreamOptions = { signal?: AbortSignal };
 
 export type KpsApi = {
@@ -74,7 +74,8 @@ export type KpsApi = {
 export type KpsConn = {
   openStream(opts?: KpsOpenStreamOptions): Promise<KpsStream>;
   acceptStream(opts?: { signal?: AbortSignal }): Promise<KpsStream>;
-  datagrams: KpsDatagrams;
+  sendDatagram(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>;
+  receiveDatagram(opts?: { signal?: AbortSignal }): Promise<Uint8Array>;
   close(reason?: KpsReason): Promise<void>;
   closed: Promise<KpsConnCloseInfo>;
 };
@@ -87,11 +88,6 @@ export type KpsStream = {
   resetWrite(reason?: KpsReason): Promise<void>;
   close(reason?: KpsReason): Promise<void>;
   closed: Promise<KpsStreamCloseInfo>;
-};
-
-export type KpsDatagrams = {
-  send(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>;
-  incoming: ReadableStream<Uint8Array>;
 };
 
 export type KpsErrorCode =
