@@ -3,12 +3,16 @@
 A working prototype of the [anon-rpc](../SPEC.md) harness and a conforming
 worker, as two npm workspaces:
 
-- [harness/](harness/) — the wallet-side runtime (the §3.1 conformance target).
+- [browser-harness/](browser-harness/) — the wallet-side runtime (the §3.1
+  conformance target), published as
+  [`@anon-rpc/browser-harness`](https://www.npmjs.com/package/@anon-rpc/browser-harness).
 - [passthrough-worker/](passthrough-worker/) — a template worker (the §3.2
   conformance target). **Copy that directory to write your own anon-client**;
   it deliberately copies the worker-facing spec types instead of importing
-  them, so it stands alone.
-It runs untrusted, hash-pinned worker code inside a Web Worker in a null-origin
+  them, so it stands alone. Not published: workers are distributed by content
+  hash via specifier resolvers (§4), not npm.
+
+The harness runs untrusted, hash-pinned worker code inside a Web Worker in a null-origin
 sandboxed iframe (§6), and exposes the `AnonRpcWorkerApi` capability surface
 (§7–§13) across the `postMessage` boundary — including a **real KPS transport**
 ([`@kpstreams/webrtc-client`](https://www.npmjs.com/package/@kpstreams/webrtc-client),
@@ -35,7 +39,7 @@ from the host to the worker.
 ```
 
 The capability port carries a small request/response + event RPC
-([harness/src/protocol.ts](harness/src/protocol.ts)). KPS stream byte flow rides **transferred**
+([browser-harness/src/protocol.ts](browser-harness/src/protocol.ts)). KPS stream byte flow rides **transferred**
 WHATWG `ReadableStream`/`WritableStream` objects (Chromium transfers them over a
 `MessagePort`), so backpressure is handled by the platform pipe and only
 lifecycle calls (`closeWrite`, `cancelRead`, …) round-trip as RPC. This is why
@@ -45,14 +49,14 @@ the worker never needs WebRTC itself — the harness owns the transport.
 
 | File | Role |
 | --- | --- |
-| [harness/src/spec-types.ts](harness/src/spec-types.ts) | Spec type surface (§5, §7–§13) |
-| [harness/src/protocol.ts](harness/src/protocol.ts) | `PortRpc`: request/response + events + transfer + cross-boundary abort |
-| [harness/src/host/AnonRpcWorker.ts](harness/src/host/AnonRpcWorker.ts) | Host class (§5): boot, iframe, fetch/acceptCall queue, storage, log |
-| [harness/src/host/specifier.ts](harness/src/host/specifier.ts) | §4: specifier read (eth_call + ABI decode) + keccak verify |
-| [harness/src/host/kps-bridge-host.ts](harness/src/host/kps-bridge-host.ts) | Host side of KPS, using real `@kpstreams/webrtc-client` |
-| [harness/src/iframe/iframe-boot.ts](harness/src/iframe/iframe-boot.ts) | Null-origin iframe: spawns worker, relays port |
-| [harness/src/worker/worker-runtime.ts](harness/src/worker/worker-runtime.ts) | Harness code in the Worker: builds `anonRpcWorker`, loads bundle |
-| [harness/src/worker/anon-rpc-worker-api.ts](harness/src/worker/anon-rpc-worker-api.ts) | Worker-side capability proxies |
+| [browser-harness/src/spec-types.ts](browser-harness/src/spec-types.ts) | Spec type surface (§5, §7–§13) |
+| [browser-harness/src/protocol.ts](browser-harness/src/protocol.ts) | `PortRpc`: request/response + events + transfer + cross-boundary abort |
+| [browser-harness/src/host/AnonRpcWorker.ts](browser-harness/src/host/AnonRpcWorker.ts) | Host class (§5): boot, iframe, fetch/acceptCall queue, storage, log |
+| [browser-harness/src/host/specifier.ts](browser-harness/src/host/specifier.ts) | §4: specifier read (eth_call + ABI decode) + keccak verify |
+| [browser-harness/src/host/kps-bridge-host.ts](browser-harness/src/host/kps-bridge-host.ts) | Host side of KPS, using real `@kpstreams/webrtc-client` |
+| [browser-harness/src/iframe/iframe-boot.ts](browser-harness/src/iframe/iframe-boot.ts) | Null-origin iframe: spawns worker, relays port |
+| [browser-harness/src/worker/worker-runtime.ts](browser-harness/src/worker/worker-runtime.ts) | Harness code in the Worker: builds `anonRpcWorker`, loads bundle |
+| [browser-harness/src/worker/anon-rpc-worker-api.ts](browser-harness/src/worker/anon-rpc-worker-api.ts) | Worker-side capability proxies |
 | [passthrough-worker/src/passthrough-worker.ts](passthrough-worker/src/passthrough-worker.ts) | The §3.2 conforming worker template (own copy of the worker-facing types) |
 
 ## Prerequisites
@@ -68,7 +72,7 @@ All commands below are run from this `impl/` directory.
 
 ```sh
 npm install            # installs both workspaces
-npm run build          # harness/dist/{host,worker-runtime,iframe-boot}.js + passthrough-worker/dist/passthrough-worker.js
+npm run build          # browser-harness/dist (host.js + types) + passthrough-worker/dist/passthrough-worker.js
 npm run typecheck      # tsc --noEmit in each workspace
 npm test               # unit tests (node --test): protocol, call queue, request normalization, specifier, worker API
 npm run test:e2e       # builds, starts the in-process kps echo peer, drives headless Chromium

@@ -18,6 +18,7 @@ import { createServer } from "node:http";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { chromium } from "playwright";
 import { listen } from "@kpstreams/server";
+import { build as esbuild } from "esbuild";
 
 const HERE = new URL(".", import.meta.url).pathname;
 const ROOT = new URL("..", import.meta.url).pathname;
@@ -183,7 +184,19 @@ async function main() {
   /* helpers bound to closure */
 
   async function startHttpServer({ workerHash }) {
-    const hostBundle = await readFile(`${ROOT}harness/dist/host.js`);
+    // The page has no bundler, so bundle the PUBLISHED entry (dist/host.js,
+    // deps external) against node_modules here — exercising exactly what a
+    // consumer's bundler would resolve.
+    const bundled = await esbuild({
+      entryPoints: [`${ROOT}browser-harness/dist/host.js`],
+      bundle: true,
+      format: "esm",
+      platform: "browser",
+      target: "es2022",
+      write: false,
+      logLevel: "warning",
+    });
+    const hostBundle = bundled.outputFiles[0].contents;
     const workerBundle = await readFile(`${ROOT}passthrough-worker/dist/passthrough-worker.js`);
     const page = await readFile(`${HERE}page.html`);
 
