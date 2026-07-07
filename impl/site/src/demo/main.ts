@@ -8,6 +8,16 @@ const SETTINGS_KEY = "anon-rpc-demo-settings";
 const POLL_MS = 12_000; // ~mainnet block time
 // The passthrough worker published on mainnet (editable below).
 const DEFAULT_SPECIFIER = "0x4fd77be300f31c5fe6ab266d35d27750a3478d27";
+// The beacon deposit contract: a huge balance that changes constantly.
+const DEFAULT_WATCH = "0x00000000219ab540356cBB839Cbe05303d7705Fa";
+// Probed in order on first visit to prefill the RPC fields (all mainnet,
+// CORS-open). Availability shifts, hence the probe rather than a hardcode.
+const PUBLIC_RPCS = [
+  "https://ethereum-rpc.publicnode.com",
+  "https://eth.drpc.org",
+  "https://1rpc.io/eth",
+  "https://cloudflare-eth.com",
+];
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const els = {
@@ -30,30 +40,64 @@ const els = {
 type Settings = { bootstrap: string; workerRpc: string; specifier: string; watch: string };
 const fields: (keyof Settings)[] = ["bootstrap", "workerRpc", "specifier", "watch"];
 
-function loadSettings(): void {
-  let saved: Partial<Settings> = {};
+function readSaved(): Partial<Settings> {
   try {
-    saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}");
+    return JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}");
   } catch {
-    // corrupted settings: start fresh
+    return {}; // corrupted settings: start fresh
   }
-  for (const f of fields) els[f].value = saved[f] ?? "";
-  if (!els.specifier.value) els.specifier.value = DEFAULT_SPECIFIER;
 }
 
-function saveSettings(): void {
-  const s = Object.fromEntries(fields.map((f) => [f, els[f].value.trim()]));
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+function persist(patch: Partial<Settings>): void {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...readSaved(), ...patch }));
 }
 
-loadSettings();
-for (const f of fields) els[f].addEventListener("input", saveSettings);
-saveSettings(); // capture the default specifier on first visit
+const saved = readSaved();
+for (const f of fields) els[f].value = saved[f] ?? "";
+if (!els.specifier.value) els.specifier.value = DEFAULT_SPECIFIER;
+if (!els.watch.value) els.watch.value = DEFAULT_WATCH;
+
+// Specifier and watch address persist as typed. The RPC URLs deliberately do
+// NOT: they are only saved once proven — bootstrap when a worker boots
+// through it, worker RPC when a balance query succeeds — so a typo never
+// becomes the sticky default.
+els.specifier.addEventListener("input", () => persist({ specifier: els.specifier.value.trim() }));
+els.watch.addEventListener("input", () => persist({ watch: els.watch.value.trim() }));
 
 els.copy.addEventListener("click", () => {
   els.workerRpc.value = els.bootstrap.value;
-  saveSettings();
 });
+
+// No proven RPC saved yet: probe the public list in order and prefill with
+// the first endpoint that answers eth_chainId with mainnet (unless the user
+// has started typing meanwhile).
+if (!saved.bootstrap) {
+  void (async () => {
+    const restore = els.bootstrap.placeholder;
+    els.bootstrap.placeholder = "checking public RPCs…";
+    try {
+      for (const url of PUBLIC_RPCS) {
+        try {
+          const resp = await fetch(url, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}',
+            signal: AbortSignal.timeout(4000),
+          });
+          const body = (await resp.json()) as { result?: string };
+          if (body.result !== "0x1") continue;
+          if (!els.bootstrap.value) els.bootstrap.value = url;
+          if (!els.workerRpc.value) els.workerRpc.value = url;
+          return;
+        } catch {
+          // endpoint down or slow: try the next one
+        }
+      }
+    } finally {
+      els.bootstrap.placeholder = restore;
+    }
+  })();
+}
 
 /* --- status --- */
 
@@ -117,6 +161,9 @@ async function tick(s: Settings): Promise<void> {
     const result = await call("eth_getBalance", [s.watch, "latest"]);
     const wei = BigInt(result as string);
 
+    // The worker RPC answered a real query: it has earned persistence.
+    persist({ workerRpc: s.workerRpc });
+
     els.balanceCard.style.display = "block";
     els.balance.innerHTML = `${formatEth(wei)} <span class="unit">ETH</span>`;
     els.checked.textContent = `last checked ${new Date().toLocaleTimeString()}`;
@@ -173,6 +220,9 @@ async function start(): Promise<void> {
     return;
   }
   if (!running) return; // stopped while booting
+
+  // A worker booted through this bootstrap RPC: it has earned persistence.
+  persist({ bootstrap: s.bootstrap });
 
   setStatus("live", `polling every ${POLL_MS / 1000} s through the sandboxed worker`);
   void tick(s);

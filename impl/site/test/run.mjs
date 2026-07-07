@@ -123,22 +123,19 @@ const page = await browser.newPage();
 page.on("pageerror", (e) => console.log("  [page:error]", e.message));
 
 await page.goto(`${siteUrl}/demo/`);
+
+// Fresh visit: watch address prefills with the beacon deposit contract.
+if ((await page.inputValue("#watch")) !== "0x00000000219ab540356cBB839Cbe05303d7705Fa") {
+  fail("watch address did not prefill with the beacon deposit contract");
+}
+ok("watch address prefilled with the default");
+
 await page.fill("#bootstrap", rpc);
 await page.click("#copy");
 if ((await page.inputValue("#worker-rpc")) !== rpc) fail("copy button didn't copy the bootstrap URL");
 ok("copy button fills worker RPC from bootstrap");
 await page.fill("#specifier", specifier);
 await page.fill("#watch", WATCH);
-
-await page.reload();
-if (
-  (await page.inputValue("#bootstrap")) !== rpc ||
-  (await page.inputValue("#specifier")) !== specifier ||
-  (await page.inputValue("#watch")) !== WATCH
-) {
-  fail("settings did not persist across reload");
-}
-ok("settings persist across reload");
 
 await page.click("#toggle");
 await page.waitForSelector(".pill.live", { timeout: 30000 }).catch(async () => {
@@ -172,6 +169,20 @@ await page.waitForFunction(
 const delta = await page.textContent("#delta");
 if (!delta?.includes("0.5")) fail(`expected a 0.5 delta, got: ${delta}`);
 ok(`balance change detected on next poll (${delta.trim()})`);
+
+// RPC URLs persist only after proven use (worker booted + balance fetched);
+// specifier/watch persist as typed. After the successful run above, a reload
+// must restore all four.
+await page.reload();
+if (
+  (await page.inputValue("#bootstrap")) !== rpc ||
+  (await page.inputValue("#worker-rpc")) !== rpc ||
+  (await page.inputValue("#specifier")) !== specifier ||
+  (await page.inputValue("#watch")) !== WATCH
+) {
+  fail("settings did not persist across reload after successful use");
+}
+ok("all settings persist across reload after successful use");
 
 console.log("\n✅ site smoke test passed");
 cleanup();
