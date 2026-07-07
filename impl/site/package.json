@@ -6,7 +6,8 @@
   "description": "GitHub Pages site: landing page + live balance-watcher demo of the anon-rpc browser harness.",
   "scripts": {
     "build": "node build.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node test/run.mjs"
   },
   "dependencies": {
     "@anon-rpc/browser-harness": "^0.1.0"

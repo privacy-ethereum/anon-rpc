@@ -24,6 +24,13 @@ await build({
   minify: true,
   sourcemap: true,
   logLevel: "info",
+  // tsconfig.json maps @anon-rpc/browser-harness to the harness SOURCE so
+  // typechecking works pre-build — but esbuild honors tsconfig paths too, and
+  // bundling the source skips the harness build's define-injected iframe/
+  // worker-runtime sources (a raw __IFRAME_BOOT_SRC__ reaches the browser).
+  // An empty tsconfig here makes the bundler resolve the real package
+  // exports: the BUILT dist/host.js.
+  tsconfigRaw: "{}",
 });
 
 console.log("site built");

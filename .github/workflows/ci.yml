@@ -33,13 +33,16 @@ jobs:
 
       - run: npm run typecheck
 
-      # Workspace tests: browser-harness unit suite (node --test) and the
-      # specifier suite (dotenv + github-resolver + forge + anvil publish).
+      # Chromium first: both the site smoke test (inside `npm test`) and the
+      # harness e2e drive it.
+      - run: npx playwright install --with-deps chromium
+
+      # Workspace tests: browser-harness unit suite (node --test), the
+      # specifier suite (dotenv + github-resolver + forge + anvil publish),
+      # and the site smoke test (built demo bundle driven against anvil).
       - run: npm test
 
       # Browser e2e: builds all workspaces, boots the in-process kps echo
       # peer (@kpstreams/server), and drives headless Chromium — including
       # real WebRTC to 127.0.0.1 and IndexedDB persistence across reloads.
-      - run: npx playwright install --with-deps chromium
-
       - run: npm run test:e2e
