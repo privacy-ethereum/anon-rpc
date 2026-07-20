@@ -150,6 +150,13 @@ await page.waitForFunction(
 );
 ok("balance displayed through the sandboxed worker");
 
+// Once watching, the status line reports the last request's outcome + timing.
+const detail = await page.textContent("#detail");
+if (!/request OK in \d+ ms/.test(detail ?? "")) {
+  fail(`status detail missing request timing — got: ${detail}`);
+}
+ok(`status shows request outcome (${detail.trim()})`);
+
 // Change the balance on-chain; the next poll must reflect it.
 await fetch(rpc, {
   method: "POST",

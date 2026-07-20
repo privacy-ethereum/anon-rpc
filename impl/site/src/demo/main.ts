@@ -101,11 +101,12 @@ if (!saved.bootstrap) {
 
 /* --- status --- */
 
-type State = "idle" | "boot" | "live" | "error";
+type State = "idle" | "boot" | "ready" | "live" | "error";
 
 function setStatus(state: State, detail: string): void {
   els.pill.className = `pill ${state === "idle" ? "" : state}`;
-  els.pill.textContent = { idle: "idle", boot: "starting", live: "watching", error: "error" }[state];
+  els.pill.textContent =
+    { idle: "idle", boot: "starting", ready: "ready", live: "watching", error: "error" }[state];
   els.detail.textContent = detail;
 }
 
@@ -156,9 +157,16 @@ function validate(): Settings {
 
 async function tick(s: Settings): Promise<void> {
   if (!worker || !running) return;
+  const t0 = Date.now();
+  // In-flight: stay "ready" until the first balance lands, "watching" after.
+  setStatus(
+    lastBalance === undefined ? "ready" : "live",
+    `eth_getBalance in flight through the worker…`,
+  );
   try {
     const call = jsonRpc(worker.fetch, s.workerRpc);
     const result = await call("eth_getBalance", [s.watch, "latest"]);
+    if (!running) return; // stopped while the request was in flight
     const wei = BigInt(result as string);
 
     // The worker RPC answered a real query: it has earned persistence.
@@ -177,10 +185,17 @@ async function tick(s: Settings): Promise<void> {
       setTimeout(() => els.balance.classList.remove("flash-up", "flash-down"), 2500);
     }
     lastBalance = wei;
-    setStatus("live", `polling every ${POLL_MS / 1000} s through the sandboxed worker`);
+    setStatus(
+      "live",
+      `request OK in ${Date.now() - t0} ms — next poll in ${POLL_MS / 1000} s`,
+    );
   } catch (e) {
+    if (!running) return; // stop() rejected the in-flight request: not an error
     // Keep polling: a transient RPC failure should not stop the watcher.
-    setStatus("error", `balance query failed: ${(e as Error).message}`);
+    setStatus(
+      "error",
+      `balance query failed after ${Date.now() - t0} ms: ${(e as Error).message} — retrying in ${POLL_MS / 1000} s`,
+    );
   }
 }
 
@@ -224,7 +239,9 @@ async function start(): Promise<void> {
   // A worker booted through this bootstrap RPC: it has earned persistence.
   persist({ bootstrap: s.bootstrap });
 
-  setStatus("live", `polling every ${POLL_MS / 1000} s through the sandboxed worker`);
+  // `worker.ready` fulfilled: the hash-verified bundle is running in the
+  // sandbox. tick() takes over the status from its first in-flight request.
+  setStatus("ready", "worker ready — bundle verified and running in the sandbox");
   void tick(s);
   timer = window.setInterval(() => void tick(s), POLL_MS);
 }
