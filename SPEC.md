@@ -6,7 +6,7 @@
 
 This document is the normative specification for **anon-rpc**, a standard that lets a wallet or application make anonymized RPC requests by running untrusted, hash-pinned client code inside a sandboxed worker, and granting that code a small, explicit, transport-neutral capability API.
 
-`draft-worker-api.md` accompanies this document as non-normative API design and examples. Where the two disagree, **this document is authoritative**.
+Appendix A gives non-normative design rationale. The reference implementation lives under `impl/` in this repository.
 
 ## 1. Introduction and scope
 
@@ -205,10 +205,11 @@ export type AnonFetchResponse = {
 
 ## 10. KPS transport
 
-KPS provides secure, multiplexed byte streams to a peer identified by a certificate hash. The worker-facing API is connection-first.
+KPS provides secure, multiplexed byte streams to a peer identified by a certificate hash. The worker-facing API is connection-first, and tracks the **KPS specification, version `^0.2.1`** (§15); a harness MUST implement KPS behaviour compatible with that version.
 
 ```ts
 export type KpsAddr = string;  // "<ip>:<port>:<certhash>", e.g. "192.0.2.1:4242:uEi..."
+                               // IPv6 hosts are bracketed: "[<ipv6>]:<port>:<certhash>"
 
 export type KpsApi = {
   dial(addr: KpsAddr, opts?: KpsDialOptions): Promise<KpsConn>;
@@ -227,6 +228,7 @@ export type KpsOpenStreamOptions = { signal?: AbortSignal };
 
 ```ts
 export type KpsConn = {
+  remoteAddress: { ip: string; port: number };
   openStream(opts?: KpsOpenStreamOptions): Promise<KpsStream>;
   acceptStream(opts?: { signal?: AbortSignal }): Promise<KpsStream>;
   sendDatagram(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>;
@@ -236,6 +238,7 @@ export type KpsConn = {
 };
 ```
 
+- `remoteAddress` is the peer's UDP endpoint as observed at connection establishment (on the dial side, the dialed endpoint) and MAY change over the connection's life (path migration, ICE renomination). It is informational — for example, per-IP policy — and MUST NOT be treated as authentication: trust derives solely from the pinned certificate hash.
 - `acceptStream()` accepts a stream opened by the peer, following the same one-at-a-time, ordered, no-drop discipline as `acceptCall` (§8).
 - `sendDatagram()`/`receiveDatagram()` MUST always be present: every connection supports datagrams, so a worker need not feature-detect. Their semantics are given in §10.3.
 - `close()` MUST invalidate all streams and datagram operations on the connection. `closed` MUST resolve (not reject) on orderly or failed shutdown, carrying `KpsConnCloseInfo`.
@@ -345,6 +348,37 @@ The log API is console-like but does not promise browser `console` semantics.
 ## 15. References
 
 - anon-rpc proposal article: https://privreads.ethereum.foundation/feed/anon-rpc/
-- KPS (Key Pinned Streams): https://github.com/privacy-ethereum/kps — see its `SPEC.md` for the wire protocol.
-- `draft-worker-api.md` (this repository) — non-normative design rationale and examples.
+- KPS (Key Pinned Streams): https://github.com/privacy-ethereum/kps — see its `SPEC.md` for the wire protocol and behavioural contract; §10 tracks KPS specification version `^0.2.1`.
 - RFC 2119, RFC 8174 — requirement-level keywords.
+
+## Appendix A: Design rationale (non-normative)
+
+### An API, not a message protocol
+
+The sandboxed worker communicates with the host via messaging, but this specification standardizes a wrapped **API** rather than the messages themselves. The API is easier to specify, easier to use, and leaves the wire encoding as an implementation detail of each harness:
+
+```ts
+// standardizing the messages would look like this…
+addEventListener("message", async (ev) => {
+  if (ev.data.type === "fetch") {
+    const response = await anonymousFetch(ev.data.url, ev.data.requestInit);
+    postMessage({ type: "fetch-result", response });
+  }
+});
+
+// …instead, the worker writes this (§7–§8)
+while (true) {
+  const call = await anonRpcWorker.acceptCall();
+  switch (call.kind) {
+    case "fetch":
+      call.respond(anonymousFetch(call.url, call.requestInit));
+      break;
+  }
+}
+```
+
+`IncomingCall` is discriminated by `kind` so future call kinds can be added without growing the accept surface.
+
+### Why KPS is a built-in capability
+
+Granting the worker `kps` (§10) removes the temptation to give the worker code a full-page iframe so it can reach WebRTC directly — which would unnecessarily lock implementations to the web. KPS server listeners accept both WebRTC and QUIC clients, so a non-web harness simply uses QUIC, and the worker neither knows nor cares which transport carries its streams.
