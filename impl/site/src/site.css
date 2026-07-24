@@ -301,6 +301,72 @@ code {
 .cta-final { text-align: center; padding: 74px 24px; }
 .cta-final h2 { margin-bottom: 18px; }
 
+/* ---- Prose (rendered markdown, e.g. the hosted spec) --------------------- */
+.prose {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 40px 24px 60px;
+}
+/* The document title line: the rendered <h1> plus the GitHub link, wrapped
+   into a flex row at build time. */
+.prose .doc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin: 0.5em 0 0.9em;
+}
+.prose .doc-head .ghost { flex: none; white-space: nowrap; }
+.prose h1 { font-size: clamp(1.9rem, 4.5vw, 2.6rem); font-weight: 800; margin: 0; }
+.prose h2 {
+  font-size: 1.45rem;
+  margin: 2.4em 0 0.6em;
+  padding-top: 1.3em;
+  border-top: 1px solid var(--border);
+}
+.prose h3 { font-size: 1.12rem; margin: 1.9em 0 0.5em; }
+.prose p { color: var(--text-dim); }
+.prose ul { margin: 0.6em 0 1.1em; }
+.prose li { color: var(--text-dim); font-size: 0.97rem; }
+.prose li > ul { margin: 6px 0 0; }
+.prose pre {
+  background: #08060d;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  overflow-x: auto;
+  font-size: 0.84rem;
+  line-height: 1.65;
+  margin: 1em 0 1.4em;
+}
+.prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: var(--text-dim);
+}
+.prose blockquote {
+  margin: 1em 0 1.4em;
+  padding: 10px 18px;
+  border-left: 3px solid var(--violet-deep);
+  background: var(--surface);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-muted);
+}
+.prose blockquote p { margin: 0; color: inherit; }
+.prose table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin: 1em 0 1.4em; }
+.prose th, .prose td { border: 1px solid var(--border); padding: 9px 12px; text-align: left; }
+.prose thead th {
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.prose hr { border: none; border-top: 1px solid var(--border); margin: 2.2em 0; }
+
 /* ---- Footer ------------------------------------------------------------- */
 .footer { border-top: 1px solid var(--border); margin-top: 70px; padding: 34px 0; color: var(--text-muted); font-size: 0.9rem; }
 .footer-inner { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; }

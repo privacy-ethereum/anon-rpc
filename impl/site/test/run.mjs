@@ -51,6 +51,14 @@ for (const f of jsFiles) {
 }
 ok(`site bundles have no unresolved build-time defines (${jsFiles.length} JS file${jsFiles.length === 1 ? "" : "s"})`);
 
+// The hosted spec page: SPEC.md rendered into the built site at build time.
+const specHtml = await readFile(`${SITE}dist/spec/index.html`, "utf8");
+if (!specHtml.includes("anon-rpc Specification")) fail("spec page is missing the rendered SPEC.md content");
+if (specHtml.includes("<!--SPEC_HTML-->")) fail("spec page still contains the unreplaced SPEC_HTML slot");
+if (!specHtml.includes("View on GitHub")) fail("spec page is missing the View on GitHub link");
+if (!specHtml.includes('class="shiki')) fail("spec page code blocks are not syntax-highlighted");
+ok("spec page hosts rendered SPEC.md with a GitHub link and highlighted code");
+
 // anvil
 const anvilPort = 21000 + Math.floor(Math.random() * 9000);
 const anvil = spawn("anvil", ["--port", String(anvilPort)], { stdio: "ignore" });
