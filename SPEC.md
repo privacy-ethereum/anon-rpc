@@ -108,6 +108,10 @@ export type WorkerInit = {
   // The contract specifier address
   address: string;
 
+  // Delivered to the worker as `anonRpcWorker.config` (§7). Opaque to the
+  // harness; its meaning is defined by the worker.
+  config?: unknown;
+
   preExisting?: {
     // An ethereum rpc provider used to break the circular dependency: we need
     // to read the chain in order to instantiate our anonymous system for reading
@@ -135,6 +139,7 @@ The harness MUST implement `AnonRpcWorkerApi` for the worker:
 export type AnonRpcWorkerApi = {
   signalReady(): void;
   acceptCall(opts?: { signal?: AbortSignal }): Promise<IncomingCall>;
+  config: unknown;
   kps: KpsApi;
   storage: StorageApi;
   log: LogApi;
@@ -146,6 +151,15 @@ export const anonRpcWorker: AnonRpcWorkerApi;
 The worker MUST call `signalReady()` when it is ready to fulfil fetch calls.
 
 The worker MAY accept calls to fetch before it calls `signalReady()`. The harness MUST buffer incoming calls so that this is not necessary.
+
+### 7.1 Config
+
+`config` carries the host's `WorkerInit.config` (§5) to the worker:
+
+- The value MUST be structured-cloneable; the harness MUST deliver an equivalent value (as by the structured clone algorithm) to the worker.
+- The harness MUST treat config as opaque: it MUST NOT interpret it or alter its behaviour based on it. Its schema is defined by the worker.
+- `config` MUST be available from the worker's first instruction (before `signalReady()`), and MUST NOT change for the lifetime of the worker. The worker receives a copy: mutating it MUST NOT affect the host's value.
+- When the host supplies no config, `config` MUST be `undefined`.
 
 ## 8. Inbound calls
 
