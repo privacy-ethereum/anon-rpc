@@ -1,12 +1,12 @@
 # anon-rpc Specification
 
 - **Status:** Draft
-- **Version:** 0.1.0
-- **Date:** 2026-06-24
+- **Version:** 0.2.0
+- **Date:** 2026-07-24
 
 This document is the normative specification for **anon-rpc**, a standard that lets a wallet or application make anonymized RPC requests by running untrusted, hash-pinned client code inside a sandboxed worker, and granting that code a small, explicit, transport-neutral capability API.
 
-Appendix A gives non-normative design rationale. The reference implementation lives under `impl/` in this repository.
+Appendix A gives non-normative design rationale.
 
 ## 1. Introduction and scope
 
@@ -81,6 +81,58 @@ interface IWorkerSpecifier {
 A harness MAY obtain the bundle bytes by any means. Any bytes matching the hash are equally acceptable regardless of source; `workerResolvers()` is advisory only.
 
 If the bundle hash does not equal `workerHash()`, the harness MUST reject it.
+
+### 4.1 Resolver entries
+
+Each `workerResolvers()` entry is one of:
+
+- an `https:` URL, fetched with a plain HTTP GET;
+- a **kps resolver string**, fetched over KPS (§4.2).
+
+A harness MUST ignore entries it does not recognize.
+
+The kps resolver grammar:
+
+```
+kps-resolver = "kps:" kps-addr path
+kps-addr     = <a KPS Address, verbatim (§10)>
+path         = "/" path-absolute        ; per RFC 3986
+```
+
+Example:
+
+```
+kps:198.51.100.7:12298:uEiAxk...9Qw/keccak/19/4f04bde4925f6bbb0bd8bdfceca7251125eaa0664ce3c0c25dce2a1545338d
+```
+
+- A kps resolver is deliberately **not a URL** and MUST NOT be fed to generic URL parsers (the address form is not a valid URL authority). The absence of `//` after the scheme is intentional signalling.
+- Parse by removing the `kps:` prefix and splitting at the **first `/`**: the left part is passed verbatim to the KPS dial operation; the right part (including the leading `/`) is the request target. This is unambiguous because a certhash is multibase-`u` base64url (alphabet `A–Z a–z 0–9 - _`) and never contains `/`, and bracketed IPv6 hosts never contain `/`.
+
+### 4.2 Fetching a bundle over KPS
+
+To fetch from a kps resolver, a harness dials the address (browser harnesses over WebRTC, native over QUIC, per §10) and performs **one request/response exchange on one KPS stream**, in HTTP/1.1 syntax. The syntax is deliberately plain HTTP so that ordinary HTTP software behind a byte-stream bridge can serve bundles; the profile below is strict, and a recipient observing a violation MUST abandon the exchange rather than recover leniently.
+
+Request — the harness writes, then calls `closeWrite()`:
+
+```
+GET <path> HTTP/1.1
+Host: <certhash of the dialed address>
+
+```
+
+- Header fields are one per line, CRLF-terminated, followed by an empty line; a `GET` request has no body.
+- `Host` is REQUIRED (HTTP/1.1 requires it and strict stacks reject its absence); its value SHOULD be the certhash of the dialed address, verbatim. Servers MUST NOT treat `Host` as a trust input — trust comes from the KPS handshake.
+
+Response — the harness reads a status line, header fields, an empty line, then body bytes **until EOF**:
+
+- The body is delimited by EOF (the server's `closeWrite()`), not by framing. `Content-Length`, when present, is advisory (e.g. progress reporting).
+- Any status other than `200` fails that resolver. Redirects (3xx) MUST NOT be followed — alternative locations are expressed as additional resolver entries.
+- `Transfer-Encoding` in either direction is forbidden; a message carrying it MUST abandon the exchange. (With EOF-delimited bodies, no chunked encoding, and one exchange per stream, the HTTP/1.1 request-smuggling/desync bug class structurally cannot occur.)
+- A harness SHOULD cap the accepted body size.
+
+The stream carries exactly one exchange: after the response body, both sides close. Connection reuse happens at the KPS layer — one connection, many streams.
+
+Integrity never depends on the transport: whether bytes came from `https:` or `kps:`, only `keccak256(bytes) == workerHash()` admits them (§4).
 
 ## 5. Host-side harness API
 

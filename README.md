@@ -7,6 +7,6 @@ running untrusted, hash-pinned client code inside a sandboxed worker and
 granting it a small, explicit, transport-neutral capability API.
 
 - [SPEC.md](SPEC.md) — the normative specification (design rationale in its
-  Appendix A).
+  Appendix A; version history in [CHANGELOG.md](CHANGELOG.md)).
 - [impl/](impl/) — a working reference prototype (browser harness + conforming
   worker, with a real KPS transport bridged across the sandbox boundary).
