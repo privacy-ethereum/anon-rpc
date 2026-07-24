@@ -7,7 +7,7 @@
 // Skips gracefully when Foundry is absent (anvil is the chain).
 
 import { spawn, execSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { chromium } from "playwright";
 
@@ -39,12 +39,17 @@ await new Promise((resolve, reject) => {
 });
 
 // The failure mode this test exists for: harness build-time defines must not
-// leak into the site bundle as bare identifiers.
-const bundleJs = await readFile(`${SITE}dist/demo/main.js`, "utf8");
-for (const ident of ["__IFRAME_BOOT_SRC__", "__WORKER_RUNTIME_SRC__"]) {
-  if (bundleJs.includes(ident)) fail(`site bundle contains unresolved build-time define ${ident}`);
+// leak into the site bundle as bare identifiers. Vite hashes output names, so
+// scan every built JS file.
+const jsFiles = (await readdir(`${SITE}dist`, { recursive: true })).filter((f) => f.endsWith(".js"));
+if (jsFiles.length === 0) fail("no JS files in the built site");
+for (const f of jsFiles) {
+  const bundleJs = await readFile(`${SITE}dist/${f}`, "utf8");
+  for (const ident of ["__IFRAME_BOOT_SRC__", "__WORKER_RUNTIME_SRC__"]) {
+    if (bundleJs.includes(ident)) fail(`site bundle ${f} contains unresolved build-time define ${ident}`);
+  }
 }
-ok("site bundle has no unresolved build-time defines");
+ok(`site bundles have no unresolved build-time defines (${jsFiles.length} JS file${jsFiles.length === 1 ? "" : "s"})`);
 
 // anvil
 const anvilPort = 21000 + Math.floor(Math.random() * 9000);
@@ -104,7 +109,11 @@ const site = createServer(async (req, res) => {
   const path = req.url.split("?")[0].replace(/\/$/, "/index.html");
   try {
     const body = await readFile(`${SITE}dist${path}`);
-    const type = path.endsWith(".html") ? "text/html" : path.endsWith(".css") ? "text/css" : "text/javascript";
+    const type = path.endsWith(".html") ? "text/html"
+      : path.endsWith(".css") ? "text/css"
+      : path.endsWith(".svg") ? "image/svg+xml"
+      : path.endsWith(".map") ? "application/json"
+      : "text/javascript";
     res.writeHead(200, { "content-type": type });
     res.end(body);
   } catch {

@@ -1,35 +1,167 @@
 <!doctype html>
 <html lang="en">
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>anon-rpc</title>
-<link rel="stylesheet" href="site.css" />
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>html{background:#0c0a12;color:#ece9f6}</style>
+  <title>anon-rpc — anonymized RPC for wallets</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <meta
+    name="description"
+    content="anon-rpc lets a wallet make anonymized RPC requests by running untrusted, hash-pinned client code in a sandboxed worker, granted a small transport-neutral capability API."
+  />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="site.css" />
+</head>
 <body>
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="./">
+        <svg class="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <path d="M16 3.5l10 4.2v7.1c0 6.6-4.3 10.6-10 13.2-5.7-2.6-10-6.6-10-13.2V7.7l10-4.2z" stroke="url(#ag)" stroke-width="2" stroke-linejoin="round"/>
+          <circle cx="16" cy="14.5" r="3" fill="url(#ag)"/>
+          <path d="M16 17.5v5" stroke="url(#ag)" stroke-width="2.2" stroke-linecap="round"/>
+          <defs><linearGradient id="ag" x1="2" y1="2" x2="30" y2="30" gradientUnits="userSpaceOnUse"><stop stop-color="#b79dff"/><stop offset="1" stop-color="#ff79c6"/></linearGradient></defs>
+        </svg>
+        <span class="brand-name">anon-rpc</span>
+      </a>
+      <nav class="nav-links">
+        <a href="#how">How it works</a>
+        <a href="https://github.com/privacy-ethereum/anon-rpc/blob/main/SPEC.md" target="_blank" rel="noopener">Spec</a>
+        <a class="gh" href="https://github.com/privacy-ethereum/anon-rpc" target="_blank" rel="noopener" aria-label="View source on GitHub" title="View source on GitHub">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.92.58.1.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.69-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.21-1.49 3.18-1.18 3.18-1.18.63 1.58.23 2.75.11 3.04.74.8 1.19 1.83 1.19 3.09 0 4.42-2.69 5.4-5.25 5.68.41.35.78 1.05.78 2.12 0 1.53-.01 2.76-.01 3.14 0 .31.21.67.8.56C20.71 21.39 24 17.08 24 12c0-6.35-5.15-11.5-11.5-11.5z"/></svg>
+        </a>
+        <a class="btn sm nav-cta" href="demo/">Live demo →</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-content">
+      <h1>Anonymous <span class="gradient-text">RPC</span></h1>
+      <p class="lead">
+        <strong>anon-rpc</strong> makes it easy for wallets and applications to anonymize their RPC
+        requests. Just provide an Ethereum address at run-time and get an anonymized <code>fetch</code>
+        function — anon-rpc plumbs the requests to a sandboxed worker running the network's hash-pinned client code.
+      </p>
+      <div class="cta-row">
+        <a class="btn" href="demo/">Try the live demo →</a>
+        <a class="btn secondary" href="https://github.com/privacy-ethereum/anon-rpc/blob/main/SPEC.md" target="_blank" rel="noopener">Read the spec →</a>
+      </div>
+      <a class="hero-sub" href="https://www.npmjs.com/package/@anon-rpc/browser-harness" target="_blank" rel="noopener">harness on <strong>npm</strong></a>
+      <span class="hero-sub">·</span>
+      <a class="hero-sub" href="https://etherscan.io/address/0x4fd77be300f31c5fe6ab266d35d27750a3478d27#readContract" target="_blank" rel="noopener">example address live on <strong>mainnet</strong></a>
+    </div>
+  </section>
+
   <main>
-    <h1>anon-rpc</h1>
-    <p class="tagline">
-      Anonymized RPC for wallets: untrusted, hash-pinned client code in a
-      sandboxed worker, granted a small transport-neutral capability API.
-    </p>
-    <ul class="links">
-      <li>
-        <a href="demo/">Live demo
-          <span class="hint">watch an ETH balance through the sandboxed worker</span></a>
-      </li>
-      <li>
-        <a href="https://github.com/privacy-ethereum/anon-rpc/blob/main/SPEC.md">Specification
-          <span class="hint">the normative SPEC.md</span></a>
-      </li>
-      <li>
-        <a href="https://www.npmjs.com/package/@anon-rpc/browser-harness">@anon-rpc/browser-harness
-          <span class="hint">the browser harness on npm</span></a>
-      </li>
-      <li>
-        <a href="https://github.com/privacy-ethereum/anon-rpc">GitHub
-          <span class="hint">spec, reference implementation, worker template</span></a>
-      </li>
-    </ul>
-    <footer>MIT © Ethereum Foundation</footer>
+    <!-- Why -->
+    <section class="section wrap" id="why">
+      <div class="section-head">
+        <div class="eyebrow">Why</div>
+        <h2>Centralized RPC providers <em>see too much</em></h2>
+        <p>
+          Wallets need to read the Ethereum state, and these reads are currently
+          concentrated in a few large RPC providers. This makes users vulnerable
+          to censorship and surveillance.
+        </p>
+        <p>With <strong>anon-rpc</strong>, requests can be:</p>
+        <ul>
+          <li>unlinked from your IP address,</li>
+          <li>connected through domainless P2P nodes (<a href="https://privacy-ethereum.github.io/kps/" target="_blank" rel="noopener">KPS</a>),</li>
+          <li>switched to a better network at any time.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="section wrap" id="how">
+      <div class="section-head">
+        <div class="eyebrow">How it works</div>
+        <h2>Pinned code in a box</h2>
+        <p>An on-chain specifier contract (<a href="https://etherscan.io/address/0x4fd77be300f31c5fe6ab266d35d27750a3478d27#readContract" target="_blank" rel="noopener">e.g.</a>) pins the anon network's client code by <code>keccak256</code>. Any bytes matching the hash are acceptable, from anywhere.</p>
+      </div>
+      <div class="steps">
+        <div class="card step">
+          <div class="step-num">1</div>
+          <h3>Pin the worker on-chain</h3>
+          <p>A specifier contract publishes <code>workerHash()</code> and advisory <code>workerResolvers()</code>. The hash is the trust; the URLs are merely suggestions for where to fetch.</p>
+        </div>
+        <div class="card step">
+          <div class="step-num">2</div>
+          <h3>Verify, then execute</h3>
+          <p>The harness fetches the bundle, accepts it only if its <code>keccak256</code> matches the pinned hash, and runs it in a Web Worker inside a null-origin sandboxed iframe.</p>
+        </div>
+        <div class="card step">
+          <div class="step-num">3</div>
+          <h3>Restricted capabilities</h3>
+          <p>The network's client code is sandboxed away from your wallet and its keys, cookies, etc. Instead it uses a messaging channel to accept <code>fetch</code> calls, connect via <a href="https://privacy-ethereum.github.io/kps/" target="_blank" rel="noopener">KPS</a>, provide logs, and access its scoped storage.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="section wrap">
+      <div class="eyebrow" style="text-align:center">What you get</div>
+      <div class="section-head" style="margin-bottom:42px">
+        <h2>Isolation you can <span class="gradient-text">verify</span></h2>
+      </div>
+      <div class="features">
+        <div class="card feature"><div class="ic">🔏</div><h3>Hash-pinned identity</h3><p>The anon-client is content-addressed via an on-chain specifier. No resolver, CDN, or mirror is trusted — only bytes matching the hash execute.</p></div>
+        <div class="card feature"><div class="ic">🧱</div><h3>Null-origin sandbox</h3><p>The worker runs in a Web Worker inside a sandboxed, null-origin iframe: no DOM, no cookies, no wallet keys, no host identity.</p></div>
+        <div class="card feature"><div class="ic">📡</div><h3><a href="https://privacy-ethereum.github.io/kps/" target="_blank" rel="noopener">KPS</a> transport built in</h3><p>Key-pinned streams to any peer by certificate hash — WebRTC in the browser, QUIC natively — so the worker never needs raw network access.</p></div>
+        <div class="card feature"><div class="ic">📬</div><h3>Ordered call discipline</h3><p>Inbound fetch calls queue with backpressure: ordered, never dropped, delivered one at a time on the worker's terms.</p></div>
+        <div class="card feature"><div class="ic">🗄️</div><h3>Scoped storage</h3><p>Async binary storage namespaced to the specifier address. A worker can persist state; it can't read anyone else's.</p></div>
+        <div class="card feature"><div class="ic">🔁</div><h3>Updatable, freezable</h3><p>The specifier owner can ship new worker versions on-chain — or renounce ownership and freeze the pinned hash forever.</p></div>
+      </div>
+    </section>
+
+    <!-- Resources -->
+    <section class="section wrap" id="resources">
+      <div class="section-head">
+        <div class="eyebrow">Resources</div>
+        <h2>Spec, harness, demo</h2>
+      </div>
+      <div class="tools">
+        <a class="card tool-card" href="demo/">
+          <h3>Live demo <span class="arrow">→</span></h3>
+          <p>Watch an ETH balance through a hash-verified worker running in the sandbox, resolved from the mainnet specifier.</p>
+        </a>
+        <a class="card tool-card" href="https://github.com/privacy-ethereum/anon-rpc/blob/main/SPEC.md" target="_blank" rel="noopener">
+          <h3>Specification <span class="arrow">→</span></h3>
+          <p>The normative SPEC.md: identity &amp; integrity, isolation, the capability API, KPS, storage, and the error model.</p>
+        </a>
+        <a class="card tool-card" href="https://www.npmjs.com/package/@anon-rpc/browser-harness" target="_blank" rel="noopener">
+          <h3><code>@anon-rpc/browser-harness</code> <span class="arrow">→</span></h3>
+          <p>The reference browser harness on npm — specifier resolution, hash verification, sandboxing, and the capability bridge.</p>
+        </a>
+        <a class="card tool-card" href="https://github.com/privacy-ethereum/anon-rpc" target="_blank" rel="noopener">
+          <h3>GitHub <span class="arrow">→</span></h3>
+          <p>Spec, reference implementation, worker template, and the on-chain publishing tooling.</p>
+        </a>
+      </div>
+    </section>
+
+    <!-- Final CTA -->
+    <section class="cta-final wrap">
+      <div class="cta-row">
+        <a class="btn" href="demo/">Launch the demo →</a>
+        <a class="btn secondary" href="https://github.com/privacy-ethereum/anon-rpc" target="_blank" rel="noopener">Read the docs</a>
+      </div>
+    </section>
   </main>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <span>anon-rpc — MIT © Ethereum Foundation</span>
+      <span class="spacer"></span>
+      <a href="https://github.com/privacy-ethereum/anon-rpc" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/privacy-ethereum/anon-rpc/blob/main/SPEC.md" target="_blank" rel="noopener">Spec</a>
+      <a href="https://www.npmjs.com/package/@anon-rpc/browser-harness" target="_blank" rel="noopener">npm</a>
+    </div>
+  </footer>
 </body>
 </html>
