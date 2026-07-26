@@ -50,15 +50,54 @@ async function ethCall(provider: RpcProvider, to: string, data: string): Promise
   return hexToBytes(res);
 }
 
+// §4.2: a harness SHOULD cap the accepted body size. A resolver is untrusted
+// input; without a cap it can make the harness buffer arbitrarily many bytes
+// before the hash check ever runs.
+export const MAX_BUNDLE_BYTES = 64 * 1024 * 1024;
+
+// Read a response body, streaming and counting: past the cap the read is
+// cancelled without buffering the excess.
+async function readBodyCapped(resp: Response, cap: number): Promise<Uint8Array> {
+  const overflow = () => new Error(`body exceeds the ${cap}-byte bundle cap`);
+  if (!resp.body) {
+    const buf = new Uint8Array(await resp.arrayBuffer());
+    if (buf.byteLength > cap) throw overflow();
+    return buf;
+  }
+  const reader = resp.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel().catch(() => {});
+      throw overflow();
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out;
+}
+
 /** Fetch bundle bytes from the first working resolver and verify the hash (§4). */
-export async function fetchAndVerifyBundle(spec: Specifier): Promise<Uint8Array> {
+export async function fetchAndVerifyBundle(
+  spec: Specifier,
+  maxBytes = MAX_BUNDLE_BYTES,
+): Promise<Uint8Array> {
   const errors: string[] = [];
   for (const url of spec.resolvers) {
     let bytes: Uint8Array;
     try {
       const resp = await fetch(url);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      bytes = new Uint8Array(await resp.arrayBuffer());
+      bytes = await readBodyCapped(resp, maxBytes);
     } catch (e) {
       errors.push(`${url}: ${(e as Error).message}`);
       continue;

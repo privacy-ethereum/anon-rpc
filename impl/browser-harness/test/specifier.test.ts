@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { keccak_256 } from "@noble/hashes/sha3";
-import { readSpecifier, fetchAndVerifyBundle, toHex } from "../src/host/specifier.js";
+import { readSpecifier, fetchAndVerifyBundle, toHex, MAX_BUNDLE_BYTES } from "../src/host/specifier.js";
 
 /* ABI encoders mirroring the decoders under test (same as test/run-e2e.mjs). */
 const enc = new TextEncoder();
@@ -112,6 +112,54 @@ test("fetchAndVerifyBundle rejects non-matching bytes (§4)", async () => {
       /hash mismatch/,
     );
   });
+});
+
+test("fetchAndVerifyBundle rejects a body past the size cap (§4.2)", async () => {
+  await withFetch(async () => new Response(new Uint8Array(2048)), async () => {
+    await assert.rejects(
+      fetchAndVerifyBundle({ workerHash: bundleHash, resolvers: ["https://big.test/w.js"] }, 1024),
+      /bundle cap/,
+    );
+  });
+});
+
+test("fetchAndVerifyBundle cancels an oversized STREAMED body at the cap", async () => {
+  let pulls = 0;
+  let cancelled = false;
+  // An endless stream: only the cap can stop it.
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulls++;
+      controller.enqueue(new Uint8Array(512));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  await withFetch(async () => new Response(body), async () => {
+    await assert.rejects(
+      fetchAndVerifyBundle({ workerHash: bundleHash, resolvers: ["https://endless.test/w.js"] }, 1024),
+      /bundle cap/,
+    );
+  });
+  assert.ok(cancelled, "the body stream must be cancelled at the cap");
+  assert.ok(pulls <= 4, `read far past the cap (${pulls} pulls of 512B against a 1024B cap)`);
+});
+
+test("fetchAndVerifyBundle falls through an oversized resolver to a good one", async () => {
+  const impl: typeof fetch = async (url) =>
+    String(url).includes("big.test") ? new Response(new Uint8Array(2048)) : new Response(bundle);
+  await withFetch(impl, async () => {
+    const got = await fetchAndVerifyBundle(
+      { workerHash: bundleHash, resolvers: ["https://big.test/w.js", "https://good.test/w.js"] },
+      1024,
+    );
+    assert.deepEqual(got, bundle);
+  });
+});
+
+test("the default bundle cap is 64 MiB", () => {
+  assert.equal(MAX_BUNDLE_BYTES, 64 * 1024 * 1024);
 });
 
 test("fetchAndVerifyBundle falls through failing resolvers to a good one", async () => {
