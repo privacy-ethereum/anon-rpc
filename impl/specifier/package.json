@@ -1,6 +1,6 @@
 {
   "name": "anon-rpc-specifier",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "description": "IWorkerSpecifier reference contract (SPEC.md §4) and the script that publishes a worker on-chain.",

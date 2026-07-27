@@ -1,6 +1,6 @@
 {
   "name": "anon-rpc-site",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "description": "GitHub Pages site: landing page + live balance-watcher demo of the anon-rpc browser harness.",
@@ -11,7 +11,7 @@
     "test": "node test/run.mjs"
   },
   "dependencies": {
-    "@anon-rpc/browser-harness": "^0.1.0"
+    "@anon-rpc/browser-harness": "*"
   },
   "devDependencies": {
     "marked": "^18.0.7",

@@ -1,6 +1,6 @@
 {
   "name": "anon-rpc-test-worker",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "description": "Test worker for the anon-rpc e2e: exercises fetch passthrough, KPS routing, and persistent storage. Not the template - copy ../passthrough-worker instead.",

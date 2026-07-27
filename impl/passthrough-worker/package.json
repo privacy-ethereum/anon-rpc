@@ -1,6 +1,6 @@
 {
   "name": "anon-rpc-passthrough-worker",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "description": "Minimal anon-rpc worker template (SPEC.md §3.2): a pure fetch passthrough. Copy this directory to start your own anon-client.",
