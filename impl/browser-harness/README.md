@@ -6,9 +6,10 @@ by running untrusted, hash-pinned anon-client code inside a sandboxed worker.
 
 The harness:
 
-- resolves the anon-client bundle from an on-chain specifier contract and
-  verifies `keccak256(bytes) == workerHash()` before executing a single byte
-  (trust the hash, not the URL);
+- resolves the anon-client bundle from an on-chain specifier contract — over
+  `https:` or over KPS itself via `kps:` resolver entries (SPEC §4.1–4.2) —
+  and verifies `keccak256(bytes) == workerHash()` before executing a single
+  byte (trust the hash, not the URL);
 - runs it in a **Web Worker inside a null-origin sandboxed iframe**, with no
   ambient access to your DOM, storage, cookies, or keys;
 - grants it a small, explicit capability API — inbound fetch calls, a

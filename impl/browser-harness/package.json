@@ -1,6 +1,6 @@
 {
   "name": "@anon-rpc/browser-harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "anon-rpc browser harness: loads a hash-pinned anon-client worker under null-origin iframe isolation and exposes an anonymized fetch (SPEC §3.1 conformance target).",
   "license": "MIT",
   "type": "module",
