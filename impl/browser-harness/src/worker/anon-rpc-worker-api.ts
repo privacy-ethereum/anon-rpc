@@ -34,7 +34,7 @@ type AcceptedCall = {
   requestInit?: AnonRequestInit & { hasSignal?: boolean };
 };
 
-export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
+export function makeWorkerApi(rpc: PortRpc, config?: unknown): AnonRpcWorkerApi {
   // AbortControllers for delivered calls; host emits "call-abort" when its
   // fetch caller aborts (the call's signal originates host-side). An abort can
   // race the acceptCall response across the port, so aborts for calls not yet
@@ -161,6 +161,7 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
   return {
     signalReady: () => rpc.emit("ready", {}),
     acceptCall,
+    config,
     kps,
     storage,
     log,

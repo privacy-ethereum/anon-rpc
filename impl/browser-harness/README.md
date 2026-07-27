@@ -31,6 +31,9 @@ import { AnonRpcWorker } from "@anon-rpc/browser-harness";
 const worker = new AnonRpcWorker({
   // The IWorkerSpecifier contract identifying the anon-client by hash.
   address: "0x…",
+  // Optional: structured-cloneable value delivered to the worker as
+  // `anonRpcWorker.config`. Opaque to the harness; schema is the worker's.
+  config: { network: "mainnet" },
   // Bootstrap provider used only to read the specifier (breaks the circular
   // "need the chain to reach the chain" dependency).
   preExisting: { rpcProvider },

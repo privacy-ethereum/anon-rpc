@@ -22,6 +22,17 @@ function setup(): { host: PortRpc; api: AnonRpcWorkerApi; close: () => void } {
   };
 }
 
+test("config lands on the api; absent config is undefined (§7.1)", () => {
+  const ch = new MessageChannel();
+  const cfg = { network: "test", nested: { deep: [1, 2] } };
+  const withCfg = makeWorkerApi(new PortRpc(ch.port1 as unknown as MessagePort), cfg);
+  assert.deepEqual(withCfg.config, cfg);
+  const without = makeWorkerApi(new PortRpc(ch.port2 as unknown as MessagePort));
+  assert.equal(without.config, undefined);
+  ch.port1.close();
+  ch.port2.close();
+});
+
 test("signalReady reaches the host as an event", async () => {
   const { host, api, close } = setup();
   try {

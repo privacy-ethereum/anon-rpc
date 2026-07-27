@@ -134,6 +134,9 @@ async function main() {
       };
       const w = new window.AnonRpcWorker({
         address: cfg.testAddress,
+        // §7.1: delivered to the worker as anonRpcWorker.config (structured
+        // clone — the nested array must survive the two postMessage hops).
+        config: { network: "e2e", retries: 3, tags: ["a", "b"] },
         preExisting: { rpcProvider: provider },
       });
       await w.ready;
@@ -142,6 +145,7 @@ async function main() {
 
       const r1 = await w.fetch(`${cfg.origin}/hello`);
       const passthrough = await r1.text();
+      const configEcho = r1.headers.get("x-anon-rpc-config");
 
       const payload = "ping-over-real-kps-" + "x".repeat(100);
       // x-kps-via: dial → the worker uses kps.dial + an explicit connection
@@ -197,7 +201,7 @@ async function main() {
 
       return {
         sandbox, passthrough, echoed, sentPayload: payload, kpsRemote,
-        echoedReq, echoedStream, abortName, afterAbort, callCount,
+        echoedReq, echoedStream, abortName, afterAbort, callCount, configEcho,
         ptBody, ptCountHeader,
       };
     },
@@ -207,6 +211,11 @@ async function main() {
   // assertions
   check("iframe sandbox is allow-scripts only (§6)", result.sandbox, "allow-scripts");
   check("plain fetch passthrough body", result.passthrough, `hello from ${origin}`);
+  check(
+    "init config delivered to the worker (§7.1)",
+    result.configEcho,
+    '{"network":"e2e","retries":3,"tags":["a","b"]}',
+  );
   check("kps-routed echo round-trips bytes", result.echoed, result.sentPayload);
   // Dial side: remoteAddress is the dialed endpoint (SPEC §10.1, KPS 0.2.x).
   check(
@@ -243,10 +252,13 @@ async function main() {
     await w.ready;
     const r = await w.fetch(`${cfg.origin}/hello`);
     const callCount = r.headers.get("x-anon-rpc-call-count");
+    const configEcho = r.headers.get("x-anon-rpc-config");
     w.close();
-    return { callCount };
+    return { callCount, configEcho };
   }, evalCfg);
   check("storage persists across page reloads (IndexedDB, §11)", afterReload.callCount, "6");
+  // This worker was constructed WITHOUT config: §7.1 requires undefined.
+  check("absent config surfaces as undefined (§7.1)", afterReload.configEcho, null);
 
   console.log("\n✅ all e2e assertions passed");
   cleanup();

@@ -52,6 +52,11 @@ async function handleCall(url: string, init?: AnonRequestInit): Promise<AnonFetc
   const count = await bumpCallCount();
   const resp = await handleFetch(url, init);
   resp.headers.push(["x-anon-rpc-call-count", String(count)]);
+  // §7.1: the host's init config is visible to worker code. Reported back so
+  // the e2e can assert both delivery and the undefined-when-absent case.
+  if (anonRpcWorker.config !== undefined) {
+    resp.headers.push(["x-anon-rpc-config", JSON.stringify(anonRpcWorker.config)]);
+  }
   return resp;
 }
 

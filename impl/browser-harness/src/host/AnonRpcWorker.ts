@@ -114,8 +114,10 @@ export class AnonRpcWorker {
     document.body.appendChild(iframe);
     await ready;
 
+    // §7.1: config rides the init message — postMessage structured-clones it,
+    // which is exactly the delivery semantic the spec requires.
     iframe.contentWindow!.postMessage(
-      { kind: "init", runtimeSource: __WORKER_RUNTIME_SRC__, bundleBytes },
+      { kind: "init", runtimeSource: __WORKER_RUNTIME_SRC__, bundleBytes, config: this.#init.config },
       "*",
       [channel.port2],
     );

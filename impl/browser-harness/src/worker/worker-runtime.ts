@@ -15,9 +15,12 @@ addEventListener("message", function onInit(ev: MessageEvent) {
 
   const port: MessagePort = ev.data.port;
   const bundleBytes: Uint8Array = ev.data.bundleBytes;
+  const config: unknown = ev.data.config;
 
   const rpc = new PortRpc(port);
-  const api = makeWorkerApi(rpc);
+  // config is set before the bundle executes: §7.1 requires it available from
+  // the worker's first instruction.
+  const api = makeWorkerApi(rpc, config);
   (globalThis as unknown as { anonRpcWorker: unknown }).anonRpcWorker = api;
 
   try {

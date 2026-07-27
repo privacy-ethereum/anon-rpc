@@ -11,6 +11,9 @@
 export type AnonRpcWorkerApi = {
   signalReady(): void;
   acceptCall(opts?: { signal?: AbortSignal }): Promise<IncomingCall>;
+  // The host's WorkerInit.config (§7.1): a structured clone, fixed for the
+  // worker's lifetime; undefined when the host supplied none.
+  config: unknown;
   kps: KpsApi;
   storage: StorageApi;
   log: LogApi;

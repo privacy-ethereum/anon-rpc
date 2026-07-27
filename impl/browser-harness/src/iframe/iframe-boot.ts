@@ -24,8 +24,9 @@
     const worker = new Worker(URL.createObjectURL(blob));
 
     // Re-transfer the entangled port (still entangled with the host's port1)
-    // and hand over the hash-verified bundle bytes for the runtime to load.
-    worker.postMessage({ kind: "init", port, bundleBytes }, [port]);
+    // and hand over the hash-verified bundle bytes for the runtime to load,
+    // plus the host's config (§7.1) — relayed untouched.
+    worker.postMessage({ kind: "init", port, bundleBytes, config: ev.data.config }, [port]);
 
     worker.addEventListener("error", (e) => {
       parent.postMessage({ kind: "worker-error", message: e.message }, "*");

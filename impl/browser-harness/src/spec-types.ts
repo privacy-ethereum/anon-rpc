@@ -12,6 +12,9 @@ export type RpcProvider = {
 export type WorkerInit = {
   // The specifier contract address.
   address: string;
+  // Delivered to the worker as `anonRpcWorker.config` (§7.1). Structured-
+  // cloneable; opaque to the harness — its schema is defined by the worker.
+  config?: unknown;
   preExisting?: {
     rpcProvider?: RpcProvider;
   };
@@ -22,6 +25,9 @@ export type WorkerInit = {
 export type AnonRpcWorkerApi = {
   signalReady(): void;
   acceptCall(opts?: { signal?: AbortSignal }): Promise<IncomingCall>;
+  // The host's WorkerInit.config (§7.1): a structured clone, fixed for the
+  // worker's lifetime; undefined when the host supplied none.
+  config: unknown;
   kps: KpsApi;
   storage: StorageApi;
   log: LogApi;
