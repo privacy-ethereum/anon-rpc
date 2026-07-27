@@ -40,7 +40,9 @@ const worker = new AnonRpcWorker({
   preExisting: { rpcProvider },
 });
 
-await worker.ready;
+// Optional: Wait for the worker to report that it is ready. You can start
+// making fetch calls before this - they'll just get buffered.
+// await worker.ready;
 
 // A standard fetch, routed through the sandboxed anon-client.
 // It is this-bound, so passing it around as a free function is fine.
