@@ -6,6 +6,7 @@
 
 import { keccak_256 } from "@noble/hashes/sha3";
 import type { RpcProvider } from "../spec-types.js";
+import { parseKpsResolver, fetchBundleOverKps } from "./kps-http.js";
 
 const SEL_WORKER_HASH = selector("workerHash()");
 const SEL_WORKER_RESOLVERS = selector("workerResolvers()");
@@ -95,9 +96,21 @@ export async function fetchAndVerifyBundle(
   for (const url of spec.resolvers) {
     let bytes: Uint8Array;
     try {
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      bytes = await readBodyCapped(resp, maxBytes);
+      // §4.1 entry kinds. `http:` is accepted alongside `https:` as a
+      // development affordance (local resolvers in tests and demos).
+      if (/^https?:\/\//.test(url)) {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        bytes = await readBodyCapped(resp, maxBytes);
+      } else if (url.startsWith("kps:")) {
+        const { addr, path } = parseKpsResolver(url)!;
+        bytes = await fetchBundleOverKps(addr, path, maxBytes);
+      } else {
+        // §4.1: unrecognized entry kinds MUST be ignored — they never fail
+        // the boot; recorded only for the all-resolvers-failed diagnostic.
+        errors.push(`${url}: unrecognized resolver kind (ignored)`);
+        continue;
+      }
     } catch (e) {
       errors.push(`${url}: ${(e as Error).message}`);
       continue;

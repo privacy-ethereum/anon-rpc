@@ -158,6 +158,32 @@ test("fetchAndVerifyBundle falls through an oversized resolver to a good one", a
   });
 });
 
+test("fetchAndVerifyBundle ignores unrecognized resolver kinds (§4.1)", async () => {
+  const calls: string[] = [];
+  const impl: typeof fetch = async (url) => {
+    calls.push(String(url));
+    return new Response(bundle);
+  };
+  await withFetch(impl, async () => {
+    const got = await fetchAndVerifyBundle({
+      workerHash: bundleHash,
+      resolvers: ["ipfs://bafyfuture", "https://good.test/w.js"],
+    });
+    assert.deepEqual(got, bundle);
+    // The unrecognized entry must not be attempted as a URL fetch.
+    assert.deepEqual(calls, ["https://good.test/w.js"]);
+  });
+});
+
+test("only-unrecognized resolvers fail with an explanatory error", async () => {
+  await withFetch(async () => new Response(bundle), async () => {
+    await assert.rejects(
+      fetchAndVerifyBundle({ workerHash: bundleHash, resolvers: ["ipfs://bafyfuture"] }),
+      /unrecognized resolver kind/,
+    );
+  });
+});
+
 test("the default bundle cap is 64 MiB", () => {
   assert.equal(MAX_BUNDLE_BYTES, 64 * 1024 * 1024);
 });

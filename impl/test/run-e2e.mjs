@@ -74,10 +74,12 @@ function encodeStringArray(strings) {
   return concat([word(0x20), array]);
 }
 
-// Two workers under test, each with its own mock specifier address:
-// the capability-exercising test worker and the minimal template.
+// Three workers under test, each with its own mock specifier address:
+// the capability-exercising test worker, the minimal template, and the
+// template again resolved over a kps resolver (§4.1–4.2).
 const TEST_ADDR = "0xabc0000000000000000000000000000000000001";
 const PT_ADDR = "0xabc0000000000000000000000000000000000002";
+const PT_KPS_ADDR = "0xabc0000000000000000000000000000000000003";
 
 async function main() {
   // 1. build all workspaces
@@ -89,12 +91,18 @@ async function main() {
     await readFile(`${ROOT}passthrough-worker/dist/passthrough-worker.js`),
   );
 
-  // 3. kps echo server
+  // 3. kps echo server + a kps bundle server speaking the §4.2 GET exchange
   const kpsAddr = await startKpsServer();
   console.log(`kps echo server: ${kpsAddr}`);
+  const kpsBundleAddr = await startKpsBundleServer(ptWorkerBytes, "/w.js");
+  console.log(`kps bundle server: ${kpsBundleAddr}`);
 
   // 4. http server
-  const { origin, ethCallMap, port } = await startHttpServer({ testWorkerBytes, ptWorkerBytes });
+  const { origin, ethCallMap, port } = await startHttpServer({
+    testWorkerBytes,
+    ptWorkerBytes,
+    kpsBundleAddr,
+  });
   console.log(`http server: ${origin}`);
 
   // 5. drive chromium
@@ -117,6 +125,7 @@ async function main() {
     ethCallMap, // nested: address -> selector -> return data
     testAddress: TEST_ADDR,
     ptAddress: PT_ADDR,
+    ptKpsAddress: PT_KPS_ADDR,
     kpsAddr,
     origin,
   };
@@ -199,10 +208,21 @@ async function main() {
       const ptCountHeader = rp.headers.get("x-anon-rpc-call-count");
       pt.close();
 
+      // §4.1–4.2: the same template, resolved via a kps resolver — after an
+      // unrecognized entry that must be ignored rather than fail the boot.
+      const ptKps = new window.AnonRpcWorker({
+        address: cfg.ptKpsAddress,
+        preExisting: { rpcProvider: provider },
+      });
+      await ptKps.ready;
+      const rk = await ptKps.fetch(`${cfg.origin}/hello`);
+      const ptKpsBody = await rk.text();
+      ptKps.close();
+
       return {
         sandbox, passthrough, echoed, sentPayload: payload, kpsRemote,
         echoedReq, echoedStream, abortName, afterAbort, callCount, configEcho,
-        ptBody, ptCountHeader,
+        ptBody, ptCountHeader, ptKpsBody,
       };
     },
     evalCfg,
@@ -231,6 +251,11 @@ async function main() {
   check("worker-persisted call counter (§11 storage)", result.callCount, "5");
   check("minimal passthrough-worker template serves fetch", result.ptBody, `hello from ${origin}`);
   check("minimal template adds no extra headers", result.ptCountHeader, null);
+  check(
+    "bundle resolved over a kps resolver, unrecognized entry ignored (§4.1–4.2)",
+    result.ptKpsBody,
+    `hello from ${origin}`,
+  );
 
   // Reload the page and start a fresh worker: the counter must continue —
   // this is what proves the store is IndexedDB, not per-page memory.
@@ -266,7 +291,7 @@ async function main() {
 
   /* helpers bound to closure */
 
-  async function startHttpServer({ testWorkerBytes, ptWorkerBytes }) {
+  async function startHttpServer({ testWorkerBytes, ptWorkerBytes, kpsBundleAddr }) {
     // The page has no bundler, so bundle the PUBLISHED entry (dist/host.js,
     // deps external) against node_modules here — exercising exactly what a
     // consumer's bundler would resolve.
@@ -311,6 +336,13 @@ async function main() {
     const ethCallMap = {
       [TEST_ADDR]: specifier(testWorkerBytes, `${origin}/dist/test-worker.js`),
       [PT_ADDR]: specifier(ptWorkerBytes, `${origin}/dist/passthrough-worker.js`),
+      // §4.1: an unrecognized entry kind first (must be ignored, not fail the
+      // boot), then the real bundle over a kps resolver (§4.2).
+      [PT_KPS_ADDR]: {
+        [selector("workerHash()")]: "0x" + toHex(keccak_256(ptWorkerBytes)),
+        [selector("workerResolvers()")]:
+          "0x" + toHex(encodeStringArray(["future-scheme:opaque-thing", `kps:${kpsBundleAddr}/w.js`])),
+      },
     };
     return { origin, ethCallMap, port };
   }
@@ -371,6 +403,67 @@ async function startKpsServer() {
       })();
     }
   })();
+
+  return listener.address("127.0.0.1");
+}
+
+// A KPS listener speaking the §4.2 bundle-fetch exchange: one GET per stream,
+// request read to EOF, response headers + bytes written, then closeWrite.
+async function startKpsBundleServer(bundleBytes, path) {
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  const listener = await listen({
+    port,
+    address: "127.0.0.1",
+    certPath: `${HERE}.tmp-kps-bundle.cert`,
+    keyPath: `${HERE}.tmp-kps-bundle.key`,
+  });
+  cleanups.push(() => void listener.close());
+
+  (async () => {
+    for (;;) {
+      let conn;
+      try {
+        conn = await listener.accept();
+      } catch {
+        return; // listener closed
+      }
+      (async () => {
+        for (;;) {
+          let stream;
+          try {
+            stream = await conn.acceptStream();
+          } catch {
+            return; // connection closed
+          }
+          serveBundle(stream).catch(() => {});
+        }
+      })();
+    }
+  })();
+
+  async function serveBundle(stream) {
+    const reader = stream.readable.getReader();
+    const chunks = [];
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    const req = Buffer.concat(chunks).toString("utf8");
+    console.log(`  [kps-bundle] ${req.split("\r\n")[0]}`);
+    const m = /^GET (\S+) HTTP\/1\.1\r\n/.exec(req);
+    const hasHost = /\r\nHost: \S+/i.test(req);
+    const writer = stream.writable.getWriter();
+    if (m && m[1] === path && hasHost) {
+      const head = `HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\nContent-Length: ${bundleBytes.length}\r\n\r\n`;
+      await writer.write(Buffer.from(head));
+      await writer.write(bundleBytes);
+    } else {
+      await writer.write(Buffer.from("HTTP/1.1 404 Not Found\r\n\r\nnope"));
+    }
+    await writer.close(); // EOF terminates the body (§4.2)
+    await stream.close().catch(() => {});
+  }
 
   return listener.address("127.0.0.1");
 }

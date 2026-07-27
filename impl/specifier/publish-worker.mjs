@@ -4,7 +4,9 @@
 // Configuration (environment, or a gitignored .env file in this directory):
 //   RPC_URL              chain RPC endpoint
 //   PRIVATE_KEY          deployer key holding funds for gas (never printed)
-//   RESOLVER_URLS        comma-separated URLs that serve the bundle bytes
+//   RESOLVER_URLS        comma-separated resolver entries serving the bundle
+//                        bytes: https URLs and/or kps resolver strings
+//                        ("kps:<ip>:<port>:<certhash>/<path>", SPEC §4.1)
 //   GITHUB_RESOLVER      set to 1 (or pass --github) to upload the bundle to
 //                        this repo's content-addressed "keccak" branch and use
 //                        the raw.githubusercontent URL as a resolver
@@ -114,6 +116,13 @@ publish plan
     console.log("⚠ resolver verification skipped (SKIP_RESOLVER_CHECK=1)");
   } else {
     for (const url of resolvers) {
+      // kps resolvers (SPEC §4.1) need a KPS dial to verify — not available
+      // from this node script. They still go on-chain; harnesses verify the
+      // pinned hash regardless of where bytes come from.
+      if (url.startsWith("kps:")) {
+        console.log(`⚠ resolver not verified (kps entries are checked by harnesses only): ${url}`);
+        continue;
+      }
       let lastProblem;
       let ok = false;
       for (let attempt = 0; attempt < 4 && !ok; attempt++) {
