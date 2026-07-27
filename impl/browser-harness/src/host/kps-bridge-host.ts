@@ -55,7 +55,10 @@ export function registerKpsBridge(rpc: PortRpc): () => void {
       conns.delete(connId);
       rpc.emit("conn.closed", { connId, info });
     });
-    return { value: { connId } };
+    // remoteAddress crosses once, at establishment — a compliant snapshot
+    // (§10.1: it reflects the endpoint observed at establishment; on the dial
+    // side, the dialed endpoint).
+    return { value: { connId, remoteAddress: c.remoteAddress } };
   });
 
   rpc.on("kps.openStream", async ({ addr }, { signal }) => {

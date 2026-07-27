@@ -144,8 +144,16 @@ async function main() {
       const passthrough = await r1.text();
 
       const payload = "ping-over-real-kps-" + "x".repeat(100);
-      const r2 = await w.fetch(`kps+echo://${cfg.kpsAddr}`, { method: "POST", body: payload });
+      // x-kps-via: dial → the worker uses kps.dial + an explicit connection
+      // and reports conn.remoteAddress back (§10.1). The stream-body call
+      // below keeps the kps.openStream sugar path covered.
+      const r2 = await w.fetch(`kps+echo://${cfg.kpsAddr}`, {
+        method: "POST",
+        body: payload,
+        headers: { "x-kps-via": "dial" },
+      });
       const echoed = await r2.text();
+      const kpsRemote = r2.headers.get("x-kps-remote");
 
       // Request-object input: method/headers/body must be honored, not
       // silently downgraded to a bare GET.
@@ -188,7 +196,7 @@ async function main() {
       pt.close();
 
       return {
-        sandbox, passthrough, echoed, sentPayload: payload,
+        sandbox, passthrough, echoed, sentPayload: payload, kpsRemote,
         echoedReq, echoedStream, abortName, afterAbort, callCount,
         ptBody, ptCountHeader,
       };
@@ -200,6 +208,12 @@ async function main() {
   check("iframe sandbox is allow-scripts only (§6)", result.sandbox, "allow-scripts");
   check("plain fetch passthrough body", result.passthrough, `hello from ${origin}`);
   check("kps-routed echo round-trips bytes", result.echoed, result.sentPayload);
+  // Dial side: remoteAddress is the dialed endpoint (SPEC §10.1, KPS 0.2.x).
+  check(
+    "worker observes conn.remoteAddress (§10.1)",
+    result.kpsRemote,
+    kpsAddr.split(":").slice(0, 2).join(":"),
+  );
   check("Request-object POST body honored (§5)", result.echoedReq, "via-request-object");
   check("ReadableStream body transfers across the boundary", result.echoedStream, "stream-body-via-kps");
   check("pre-aborted fetch rejects with AbortError", result.abortName, "AbortError");

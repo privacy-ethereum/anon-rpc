@@ -74,9 +74,10 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
     };
   }
 
-  function makeConn(connId: number): KpsConn {
+  function makeConn(connId: number, remoteAddress: { ip: string; port: number }): KpsConn {
     const closed = new Promise<KpsConnCloseInfo>((resolve) => connClosed.set(connId, resolve));
     return {
+      remoteAddress,
       openStream: async (opts) =>
         makeStream(await rpc.call<StreamParts>("conn.openStream", { connId }, sigOpt(opts))),
       acceptStream: async (opts) =>
@@ -90,8 +91,11 @@ export function makeWorkerApi(rpc: PortRpc): AnonRpcWorkerApi {
 
   const kps: KpsApi = {
     dial: async (addr, opts) => {
-      const { connId } = await rpc.call<{ connId: number }>("kps.dial", { addr }, sigOpt(opts));
-      return makeConn(connId);
+      const { connId, remoteAddress } = await rpc.call<{
+        connId: number;
+        remoteAddress: { ip: string; port: number };
+      }>("kps.dial", { addr }, sigOpt(opts));
+      return makeConn(connId, remoteAddress);
     },
     openStream: async (addr, opts) =>
       makeStream(await rpc.call<StreamParts>("kps.openStream", { addr }, sigOpt(opts))),

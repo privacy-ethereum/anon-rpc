@@ -75,7 +75,23 @@ async function handleFetch(url: string, init?: AnonRequestInit): Promise<AnonFet
 
 async function kpsEcho(addr: string, init?: AnonRequestInit): Promise<AnonFetchResponse> {
   anonRpcWorker.log.debug("routing over kps to", addr);
-  const stream = await anonRpcWorker.kps.openStream(addr);
+
+  // An `x-kps-via: dial` request header routes through kps.dial + an explicit
+  // connection (exercising that bridge path and exposing remoteAddress);
+  // otherwise the kps.openStream sugar is used. Both paths are e2e-covered.
+  const viaDial = init?.headers?.some(([k, v]) => k.toLowerCase() === "x-kps-via" && v === "dial");
+  const headers: [string, string][] = [["content-type", "application/octet-stream"]];
+
+  let stream;
+  let closeConn: (() => Promise<void>) | undefined;
+  if (viaDial) {
+    const conn = await anonRpcWorker.kps.dial(addr);
+    headers.push(["x-kps-remote", `${conn.remoteAddress.ip}:${conn.remoteAddress.port}`]);
+    stream = await conn.openStream();
+    closeConn = () => conn.close();
+  } else {
+    stream = await anonRpcWorker.kps.openStream(addr);
+  }
 
   // Write the request body, then signal EOF so the echo server copies it back.
   const body = await readAll(init?.body);
@@ -85,12 +101,9 @@ async function kpsEcho(addr: string, init?: AnonRequestInit): Promise<AnonFetchR
 
   const echoed = await readAll(stream.readable);
   await stream.close();
+  await closeConn?.();
 
-  return {
-    status: 200,
-    headers: [["content-type", "application/octet-stream"]],
-    body: echoed,
-  };
+  return { status: 200, headers, body: echoed };
 }
 
 async function passthrough(url: string, init?: AnonRequestInit): Promise<AnonFetchResponse> {

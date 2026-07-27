@@ -61,6 +61,10 @@ export type KpsApi = {
 };
 
 export type KpsConn = {
+  // The peer's UDP endpoint as observed at connection establishment (on the
+  // dial side, the dialed endpoint); MAY change over the connection's life.
+  // Informational only — trust derives solely from the pinned certhash.
+  remoteAddress: { ip: string; port: number };
   openStream(opts?: KpsOpenStreamOptions): Promise<KpsStream>;
   acceptStream(opts?: { signal?: AbortSignal }): Promise<KpsStream>;
   sendDatagram(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>;
