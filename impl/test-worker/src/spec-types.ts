@@ -10,6 +10,11 @@
 
 export type AnonRpcWorkerApi = {
   signalReady(): void;
+  // Report an unrecoverable failure (§7): before signalReady(), "cannot
+  // become ready"; after it, "cannot continue". The host's `ready` rejects
+  // (if pending) and all pending/future calls fail, with reason's
+  // code/message on the error. Failure is final.
+  signalFailed(reason?: { code?: string; message?: string }): void;
   acceptCall(opts?: { signal?: AbortSignal }): Promise<IncomingCall>;
   // The host's WorkerInit.config (§7.1): a structured clone, fixed for the
   // worker's lifetime; undefined when the host supplied none.

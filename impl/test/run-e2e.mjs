@@ -83,6 +83,16 @@ const PT_ADDR = "0xabc0000000000000000000000000000000000002";
 const PT_KPS_ADDR = "0xabc0000000000000000000000000000000000003";
 const PT_KPS_BAD_ADDR = "0xabc0000000000000000000000000000000000004";
 const PT_KPS_GZ_ADDR = "0xabc0000000000000000000000000000000000005";
+const FAIL_ADDR = "0xabc0000000000000000000000000000000000006";
+
+// A worker that refuses to become ready (§7 signalFailed) — plain source, no
+// build: its bytes are the hash-pinned artifact like any other bundle. The
+// trailing signalReady() must be ignored (failure is final).
+const failingWorkerBytes = new TextEncoder().encode(
+  `anonRpcWorker.signalFailed({ code: "e2e-refuse", message: "deliberately failing" });
+anonRpcWorker.signalReady();
+`,
+);
 
 async function main() {
   // 1. build all workspaces
@@ -131,6 +141,7 @@ async function main() {
     ptKpsAddress: PT_KPS_ADDR,
     ptKpsBadAddress: PT_KPS_BAD_ADDR,
     ptKpsGzAddress: PT_KPS_GZ_ADDR,
+    failAddress: FAIL_ADDR,
     kpsAddr,
     origin,
   };
@@ -238,6 +249,20 @@ async function main() {
       }
       ptKpsBad.close();
 
+      // §7 signalFailed: ready rejects with the structured reason; the
+      // worker's follow-up signalReady() is ignored (failure is final).
+      const failing = new window.AnonRpcWorker({
+        address: cfg.failAddress,
+        preExisting: { rpcProvider: provider },
+      });
+      let signalFailedError = null;
+      try {
+        await failing.ready;
+      } catch (e) {
+        signalFailedError = { name: e?.name, code: e?.code, message: e?.message };
+      }
+      failing.close();
+
       // §4.2 content coding: bundle served as Content-Encoding: gzip.
       const ptKpsGz = new window.AnonRpcWorker({
         address: cfg.ptKpsGzAddress,
@@ -251,7 +276,7 @@ async function main() {
       return {
         sandbox, passthrough, echoed, sentPayload: payload, kpsRemote,
         echoedReq, echoedStream, abortName, afterAbort, callCount, configEcho,
-        ptBody, ptCountHeader, ptKpsBody, kpsBadBootError, ptKpsGzBody,
+        ptBody, ptCountHeader, ptKpsBody, kpsBadBootError, ptKpsGzBody, signalFailedError,
       };
     },
     evalCfg,
@@ -301,6 +326,11 @@ async function main() {
     "gzip-encoded bundle advertised, decoded, and verified (§4.2)",
     result.ptKpsGzBody,
     `hello from ${origin}`,
+  );
+  check(
+    "signalFailed rejects ready with the structured reason; late signalReady ignored (§7)",
+    JSON.stringify(result.signalFailedError),
+    JSON.stringify({ name: "WorkerFailedError", code: "e2e-refuse", message: "deliberately failing" }),
   );
 
   // Reload the page and start a fresh worker: the counter must continue —
@@ -359,6 +389,7 @@ async function main() {
       if (url === "/dist/host.js") return send(res, 200, "text/javascript", hostBundle);
       if (url === "/dist/test-worker.js") return send(res, 200, "text/javascript", testWorkerBytes);
       if (url === "/dist/passthrough-worker.js") return send(res, 200, "text/javascript", ptWorkerBytes);
+      if (url === "/dist/failing-worker.js") return send(res, 200, "text/javascript", failingWorkerBytes);
       if (url === "/hello") return send(res, 200, "text/plain", `hello from ${originRef.value}`);
       if (url === "/echo" && req.method === "POST") {
         const chunks = [];
@@ -405,6 +436,8 @@ async function main() {
         [selector("workerResolvers()")]:
           "0x" + toHex(encodeStringArray([`kps:${kpsBundleAddr}/missing.js`])),
       },
+      // §7 signalFailed: the worker deliberately refuses readiness.
+      [FAIL_ADDR]: specifier(failingWorkerBytes, `${origin}/dist/failing-worker.js`),
       // §4.2 content coding: the bundle arrives gzipped and is decoded before
       // the hash check (the route 500s unless gzip was advertised).
       [PT_KPS_GZ_ADDR]: {

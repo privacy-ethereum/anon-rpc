@@ -136,6 +136,19 @@ export class AnonRpcWorker {
       this.#fail(new Error(`worker bundle failed to load: ${message}`));
     });
 
+    // §7 signalFailed: the worker deliberately reports an unrecoverable
+    // failure. code crosses intact for the host to branch on (§12); #fail's
+    // one-shot guard gives the MUST-ignore-later-signals semantics.
+    rpc.onEvent("failed", ({ reason }: { reason?: { code?: string; message?: string } }) => {
+      this.#fail(
+        new RpcError({
+          name: "WorkerFailedError",
+          message: reason?.message ?? "worker signalled failure",
+          code: reason?.code,
+        }),
+      );
+    });
+
     // The worker aborted an acceptCall that lost the race with delivery: the
     // call comes back to the FRONT of the queue for the next acceptCall
     // (§8: an aborted acceptCall must not consume a call).

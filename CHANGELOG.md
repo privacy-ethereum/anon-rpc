@@ -2,6 +2,10 @@
 
 Changes to [SPEC.md](SPEC.md) by specification version.
 
+## 0.3.0 — 2026-07-27
+
+- §5, §7: `signalFailed(reason?)` — a worker can report that it cannot become ready (or has unrecoverably failed); `ready` rejection semantics specified (integrity failure, uncaught worker error, `signalFailed`), and a failed worker fails all pending and future calls. Breaking for harness implementers: `AnonRpcWorkerApi` gains a required method.
+
 ## 0.2.1 — 2026-07-27
 
 - §4.2: content codings over kps resolvers — the request advertises what the harness's environment can decode (`Accept-Encoding`), a response may use exactly one advertised coding (`Content-Encoding`), and the body-size cap applies to the decoded bytes. The hash check always runs over the decoded bytes.

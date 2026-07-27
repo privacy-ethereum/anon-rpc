@@ -44,6 +44,17 @@ test("signalReady reaches the host as an event", async () => {
   }
 });
 
+test("signalFailed reaches the host with the structured reason (§7)", async () => {
+  const { host, api, close } = setup();
+  try {
+    const failed = new Promise((resolve) => host.onEvent("failed", resolve));
+    api.signalFailed({ code: "bad-config", message: "no network configured" });
+    assert.deepEqual(await failed, { reason: { code: "bad-config", message: "no network configured" } });
+  } finally {
+    close();
+  }
+});
+
 test("acceptCall delivers a fetch call; respond round-trips the response", async () => {
   const { host, api, close } = setup();
   try {

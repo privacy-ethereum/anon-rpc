@@ -4,3 +4,6 @@ dist/
 .tmp-*
 *.log
 *.key
+.swp
+*.swp
+*.swo

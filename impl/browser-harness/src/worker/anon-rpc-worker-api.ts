@@ -160,6 +160,10 @@ export function makeWorkerApi(rpc: PortRpc, config?: unknown): AnonRpcWorkerApi 
 
   return {
     signalReady: () => rpc.emit("ready", {}),
+    // Failure finality (§7: later signals ignored) is enforced host-side —
+    // #fail is one-shot and resolving an already-rejected ready is a no-op.
+    signalFailed: (reason?: { code?: string; message?: string }) =>
+      rpc.emit("failed", { reason }),
     acceptCall,
     config,
     kps,

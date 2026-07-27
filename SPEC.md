@@ -1,7 +1,7 @@
 # anon-rpc Specification
 
 - **Status:** Draft
-- **Version:** 0.2.1
+- **Version:** 0.3.0
 - **Date:** 2026-07-27
 
 This document is the normative specification for **anon-rpc**, a standard that lets a wallet or application make anonymized RPC requests by running untrusted, hash-pinned client code inside a sandboxed worker, and granting that code a small, explicit, transport-neutral capability API.
@@ -145,6 +145,7 @@ export class AnonRpcWorker {
   constructor(init: WorkerInit);
 
   // Resolves when the worker is loaded and has called its signalReady() method.
+  // Rejects when the worker cannot be started or has failed (see below).
   ready: Promise<void>;
 
   // Implements the web's fetch API. This field MUST be this-bound; it MUST work
@@ -175,6 +176,14 @@ export type WorkerInit = {
 };
 ```
 
+`ready` MUST reject when the worker cannot be started or has failed:
+
+- no bundle with the pinned hash could be obtained (§4–§4.2);
+- the worker suffered an uncaught error — untrusted code in an unknown state MUST be treated as an unrecoverable failure;
+- the worker reported failure via `signalFailed()` (§7).
+
+After such a failure the harness MUST also fail all pending and future `fetch` calls; nothing may hang awaiting a worker that will never serve.
+
 ## 6. Worker isolation
 
 A conforming harness MUST run the worker such that it has no ambient access to:
@@ -192,6 +201,7 @@ The harness MUST implement `AnonRpcWorkerApi` for the worker:
 ```ts
 export type AnonRpcWorkerApi = {
   signalReady(): void;
+  signalFailed(reason?: { code?: string; message?: string }): void;
   acceptCall(opts?: { signal?: AbortSignal }): Promise<IncomingCall>;
   config: unknown;
   kps: KpsApi;
@@ -205,6 +215,8 @@ export const anonRpcWorker: AnonRpcWorkerApi;
 The worker MUST call `signalReady()` when it is ready to fulfil fetch calls.
 
 The worker MAY accept calls to fetch before it calls `signalReady()`. The harness MUST buffer incoming calls so that this is not necessary.
+
+The worker MAY call `signalFailed(reason?)` — before `signalReady()`, to report that it cannot become ready (bad config, unreachable network, unsupported platform, …); or after it, to report an unrecoverable failure. The harness MUST then fail the worker: `ready` (if pending) MUST reject, and pending and future calls MUST fail, with an error carrying `reason`'s `code` and `message` (§12 discipline: host logic may branch on `code`, never on `message`). Failure is final: `signalReady()` after `signalFailed()`, and repeated `signalFailed()` calls, MUST be ignored.
 
 ### 7.1 Config
 
