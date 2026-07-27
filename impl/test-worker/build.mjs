@@ -3,6 +3,11 @@
 // specifier contract's workerHash() pins.
 
 import { build } from "esbuild";
+import { rm } from "node:fs/promises";
+
+// Fresh dist every build: a renamed entry must not leave a stale bundle
+// behind (these bytes are the hash-pinned §4 artifact — no ambiguity allowed).
+await rm("dist", { recursive: true, force: true });
 
 await build({
   entryPoints: ["src/test-worker.ts"],

@@ -10,9 +10,13 @@
 // they are blob-spawned where imports cannot resolve.
 
 import { build } from "esbuild";
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir, rm } from "node:fs/promises";
 
+// Fresh dist every build: without this, renamed/deleted sources leave stale
+// bundles and .d.ts files behind — and dist/types ships wholesale in the
+// tarball. (tsc emits dist/types AFTER this script, in the same build script.)
 const outdir = "dist";
+await rm(outdir, { recursive: true, force: true });
 await mkdir(outdir, { recursive: true });
 
 const common = {
