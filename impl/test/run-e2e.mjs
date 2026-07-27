@@ -80,6 +80,7 @@ function encodeStringArray(strings) {
 const TEST_ADDR = "0xabc0000000000000000000000000000000000001";
 const PT_ADDR = "0xabc0000000000000000000000000000000000002";
 const PT_KPS_ADDR = "0xabc0000000000000000000000000000000000003";
+const PT_KPS_BAD_ADDR = "0xabc0000000000000000000000000000000000004";
 
 async function main() {
   // 1. build all workspaces
@@ -94,7 +95,7 @@ async function main() {
   // 3. kps echo server + a kps bundle server speaking the §4.2 GET exchange
   const kpsAddr = await startKpsServer();
   console.log(`kps echo server: ${kpsAddr}`);
-  const kpsBundleAddr = await startKpsBundleServer(ptWorkerBytes, "/w.js");
+  const { addr: kpsBundleAddr, requests: kpsBundleRequests } = await startKpsBundleServer(ptWorkerBytes);
   console.log(`kps bundle server: ${kpsBundleAddr}`);
 
   // 4. http server
@@ -126,6 +127,7 @@ async function main() {
     testAddress: TEST_ADDR,
     ptAddress: PT_ADDR,
     ptKpsAddress: PT_KPS_ADDR,
+    ptKpsBadAddress: PT_KPS_BAD_ADDR,
     kpsAddr,
     origin,
   };
@@ -208,8 +210,8 @@ async function main() {
       const ptCountHeader = rp.headers.get("x-anon-rpc-call-count");
       pt.close();
 
-      // §4.1–4.2: the same template, resolved via a kps resolver — after an
-      // unrecognized entry that must be ignored rather than fail the boot.
+      // §4.1–4.2 gauntlet: unrecognized entry + every kps failure mode fall
+      // through, and the final pinned-bytes resolver boots the worker.
       const ptKps = new window.AnonRpcWorker({
         address: cfg.ptKpsAddress,
         preExisting: { rpcProvider: provider },
@@ -219,10 +221,24 @@ async function main() {
       const ptKpsBody = await rk.text();
       ptKps.close();
 
+      // Only failing kps resolvers: ready must reject (with the per-resolver
+      // diagnostics), not hang.
+      const ptKpsBad = new window.AnonRpcWorker({
+        address: cfg.ptKpsBadAddress,
+        preExisting: { rpcProvider: provider },
+      });
+      let kpsBadBootError = "";
+      try {
+        await ptKpsBad.ready;
+      } catch (e) {
+        kpsBadBootError = String(e?.message ?? e);
+      }
+      ptKpsBad.close();
+
       return {
         sandbox, passthrough, echoed, sentPayload: payload, kpsRemote,
         echoedReq, echoedStream, abortName, afterAbort, callCount, configEcho,
-        ptBody, ptCountHeader, ptKpsBody,
+        ptBody, ptCountHeader, ptKpsBody, kpsBadBootError,
       };
     },
     evalCfg,
@@ -256,6 +272,18 @@ async function main() {
     result.ptKpsBody,
     `hello from ${origin}`,
   );
+  // The real @kpstreams/server saw each failure-mode route, in resolver-list
+  // order, before the pinned bytes were accepted (§4.2 fall-through) — plus
+  // the negative boot's lone /missing.js attempt.
+  check(
+    "every §4.2 failure mode was attempted in order against the kps server",
+    kpsBundleRequests.join(" "),
+    "/missing.js /redirect.js /chunked.js /tampered.js /w.js /missing.js",
+  );
+  if (!/no resolver yielded bytes matching workerHash/.test(result.kpsBadBootError)) {
+    fail(`kps-only failing resolvers: expected a diagnostic boot rejection, got: ${result.kpsBadBootError}`);
+  }
+  console.log("  ✓ boot rejects with diagnostics when every kps resolver fails");
 
   // Reload the page and start a fresh worker: the counter must continue —
   // this is what proves the store is IndexedDB, not per-page memory.
@@ -336,12 +364,27 @@ async function main() {
     const ethCallMap = {
       [TEST_ADDR]: specifier(testWorkerBytes, `${origin}/dist/test-worker.js`),
       [PT_ADDR]: specifier(ptWorkerBytes, `${origin}/dist/passthrough-worker.js`),
-      // §4.1: an unrecognized entry kind first (must be ignored, not fail the
-      // boot), then the real bundle over a kps resolver (§4.2).
+      // §4.1–4.2 gauntlet: an unrecognized entry kind, then every kps failure
+      // mode (404, redirect, forbidden Transfer-Encoding, tampered bytes) —
+      // each must fail that resolver WITHOUT failing the boot — and finally
+      // the pinned bytes. Order is asserted via the server's request log.
       [PT_KPS_ADDR]: {
         [selector("workerHash()")]: "0x" + toHex(keccak_256(ptWorkerBytes)),
         [selector("workerResolvers()")]:
-          "0x" + toHex(encodeStringArray(["future-scheme:opaque-thing", `kps:${kpsBundleAddr}/w.js`])),
+          "0x" + toHex(encodeStringArray([
+            "future-scheme:opaque-thing",
+            `kps:${kpsBundleAddr}/missing.js`,
+            `kps:${kpsBundleAddr}/redirect.js`,
+            `kps:${kpsBundleAddr}/chunked.js`,
+            `kps:${kpsBundleAddr}/tampered.js`,
+            `kps:${kpsBundleAddr}/w.js`,
+          ])),
+      },
+      // Only failing kps resolvers: the boot itself must reject.
+      [PT_KPS_BAD_ADDR]: {
+        [selector("workerHash()")]: "0x" + toHex(keccak_256(ptWorkerBytes)),
+        [selector("workerResolvers()")]:
+          "0x" + toHex(encodeStringArray([`kps:${kpsBundleAddr}/missing.js`])),
       },
     };
     return { origin, ethCallMap, port };
@@ -409,7 +452,16 @@ async function startKpsServer() {
 
 // A KPS listener speaking the §4.2 bundle-fetch exchange: one GET per stream,
 // request read to EOF, response headers + bytes written, then closeWrite.
-async function startKpsBundleServer(bundleBytes, path) {
+// Routes cover every §4.2 failure mode so the harness's fall-through can be
+// proven against a real server:
+//   /w.js        → 200 + the pinned bytes
+//   /tampered.js → 200 + DIFFERENT bytes (harness must reject the hash)
+//   /missing.js  → 404 (non-200 fails the resolver)
+//   /chunked.js  → 200 + Transfer-Encoding header + the PINNED bytes — only
+//                  the §4.2 abandon rule stops this one from succeeding
+//   /redirect.js → 301 + Location (redirects must never be followed)
+// Requests are recorded (in order) for the caller to assert on.
+async function startKpsBundleServer(bundleBytes) {
   const port = 20000 + Math.floor(Math.random() * 20000);
   const listener = await listen({
     port,
@@ -441,6 +493,8 @@ async function startKpsBundleServer(bundleBytes, path) {
     }
   })();
 
+  const requests = [];
+
   async function serveBundle(stream) {
     const reader = stream.readable.getReader();
     const chunks = [];
@@ -453,19 +507,32 @@ async function startKpsBundleServer(bundleBytes, path) {
     console.log(`  [kps-bundle] ${req.split("\r\n")[0]}`);
     const m = /^GET (\S+) HTTP\/1\.1\r\n/.exec(req);
     const hasHost = /\r\nHost: \S+/i.test(req);
+    const path = m && hasHost ? m[1] : null;
+    if (path) requests.push(path);
+
     const writer = stream.writable.getWriter();
-    if (m && m[1] === path && hasHost) {
-      const head = `HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\nContent-Length: ${bundleBytes.length}\r\n\r\n`;
-      await writer.write(Buffer.from(head));
-      await writer.write(bundleBytes);
+    const send = (head, body = Buffer.alloc(0)) =>
+      writer.write(Buffer.from(head)).then(() => (body.length ? writer.write(body) : undefined));
+
+    if (path === "/w.js") {
+      await send(`HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\nContent-Length: ${bundleBytes.length}\r\n\r\n`, bundleBytes);
+    } else if (path === "/tampered.js") {
+      const evil = Buffer.concat([Buffer.from("//evil\n"), bundleBytes]);
+      await send(`HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\n\r\n`, evil);
+    } else if (path === "/chunked.js") {
+      // The PINNED bytes behind a forbidden header: a lenient client would
+      // succeed here, so only the §4.2 abandon rule makes this entry fail.
+      await send(`HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n`, bundleBytes);
+    } else if (path === "/redirect.js") {
+      await send(`HTTP/1.1 301 Moved Permanently\r\nLocation: https://elsewhere.test/w.js\r\n\r\n`);
     } else {
-      await writer.write(Buffer.from("HTTP/1.1 404 Not Found\r\n\r\nnope"));
+      await send("HTTP/1.1 404 Not Found\r\n\r\n", Buffer.from("nope"));
     }
     await writer.close(); // EOF terminates the body (§4.2)
     await stream.close().catch(() => {});
   }
 
-  return listener.address("127.0.0.1");
+  return { addr: listener.address("127.0.0.1"), requests };
 }
 
 async function echoStream(stream) {
