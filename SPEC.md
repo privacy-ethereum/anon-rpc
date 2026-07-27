@@ -1,8 +1,8 @@
 # anon-rpc Specification
 
 - **Status:** Draft
-- **Version:** 0.2.0
-- **Date:** 2026-07-24
+- **Version:** 0.2.1
+- **Date:** 2026-07-27
 
 This document is the normative specification for **anon-rpc**, a standard that lets a wallet or application make anonymized RPC requests by running untrusted, hash-pinned client code inside a sandboxed worker, and granting that code a small, explicit, transport-neutral capability API.
 
@@ -122,17 +122,19 @@ Host: <certhash of the dialed address>
 
 - Header fields are one per line, CRLF-terminated, followed by an empty line; a `GET` request has no body.
 - `Host` is REQUIRED (HTTP/1.1 requires it and strict stacks reject its absence); its value SHOULD be the certhash of the dialed address, verbatim. Servers MUST NOT treat `Host` as a trust input — trust comes from the KPS handshake.
+- The request SHOULD include `Accept-Encoding` listing the content codings the harness can decode with facilities ambient in its environment (e.g. `gzip, deflate` where a decompression stream is available); the header is omitted when there are none. A harness MUST NOT advertise a coding it cannot decode.
 
 Response — the harness reads a status line, header fields, an empty line, then body bytes **until EOF**:
 
 - The body is delimited by EOF (the server's `closeWrite()`), not by framing. `Content-Length`, when present, is advisory (e.g. progress reporting).
 - Any status other than `200` fails that resolver. Redirects (3xx) MUST NOT be followed — alternative locations are expressed as additional resolver entries.
 - `Transfer-Encoding` in either direction is forbidden; a message carrying it MUST abandon the exchange. (With EOF-delimited bodies, no chunked encoding, and one exchange per stream, the HTTP/1.1 request-smuggling/desync bug class structurally cannot occur.)
-- A harness SHOULD cap the accepted body size.
+- The response MAY carry `Content-Encoding` naming exactly one coding the request advertised; the harness MUST then decode the body before the hash check. `identity`, or no `Content-Encoding`, means the body is the bundle bytes as-is. Anything else — a coding the request did not advertise, or a list of codings — fails that resolver.
+- A harness SHOULD cap the accepted body size. With a content coding the cap MUST be enforced on the **decoded** bytes (a small compressed body must not expand past the cap), and SHOULD also be enforced on the wire bytes.
 
 The stream carries exactly one exchange: after the response body, both sides close. Connection reuse happens at the KPS layer — one connection, many streams.
 
-Integrity never depends on the transport: whether bytes came from `https:` or `kps:`, only `keccak256(bytes) == workerHash()` admits them (§4).
+Integrity never depends on the transport: whether bytes came from `https:` or `kps:`, and whatever content coding carried them, only `keccak256(bytes) == workerHash()` over the decoded bytes admits them (§4).
 
 ## 5. Host-side harness API
 

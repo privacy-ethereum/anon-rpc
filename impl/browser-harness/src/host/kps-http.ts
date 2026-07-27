@@ -26,8 +26,95 @@ export function parseKpsResolver(entry: string): { addr: string; path: string } 
 }
 
 /** The single-exchange GET request (§4.2). Host = certhash of the dialed address. */
-export function buildKpsHttpRequest(path: string, certhash: string): Uint8Array {
-  return enc.encode(`GET ${path} HTTP/1.1${CRLF}Host: ${certhash}${CRLF}${CRLF}`);
+export function buildKpsHttpRequest(
+  path: string,
+  certhash: string,
+  acceptEncodings: string[] = [],
+): Uint8Array {
+  const accept = acceptEncodings.length
+    ? `Accept-Encoding: ${acceptEncodings.join(", ")}${CRLF}`
+    : "";
+  return enc.encode(`GET ${path} HTTP/1.1${CRLF}Host: ${certhash}${CRLF}${accept}${CRLF}`);
+}
+
+// HTTP content codings, in advertisement order, mapped to the format names a
+// DecompressionStream might know them by (environments differ on br/zstd
+// naming, and most don't ship them yet — probing covers whatever exists).
+const CODING_FORMATS: [coding: string, formats: string[]][] = [
+  ["zstd", ["zstd"]],
+  ["br", ["br", "brotli"]],
+  ["gzip", ["gzip"]],
+  ["deflate", ["deflate"]], // HTTP "deflate" is the zlib format, as is the API's
+];
+
+type DecompressionStreamCtor = new (format: string) => {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+};
+
+function decompressionCtor(): DecompressionStreamCtor | undefined {
+  return (globalThis as { DecompressionStream?: DecompressionStreamCtor }).DecompressionStream;
+}
+
+/** The environment's format name for an HTTP coding, or undefined if undecodable. */
+function decompressionFormatFor(coding: string): string | undefined {
+  const DS = decompressionCtor();
+  if (!DS) return undefined;
+  for (const format of CODING_FORMATS.find(([c]) => c === coding)?.[1] ?? []) {
+    try {
+      new DS(format);
+      return format;
+    } catch {
+      // format unknown to this environment: try the next name / give up
+    }
+  }
+  return undefined;
+}
+
+/**
+ * §4.2: the content codings this environment can decode with its ambient
+ * facilities — what the request advertises. MUST NOT list anything
+ * undecodable, so each coding is probed by constructing a decompressor.
+ */
+export function ambientCodings(): string[] {
+  return CODING_FORMATS.map(([c]) => c).filter((c) => decompressionFormatFor(c) !== undefined);
+}
+
+/**
+ * Decode a Content-Encoding'd body, enforcing the cap on the DECODED bytes
+ * (§4.2: a small compressed body must not expand past the cap).
+ */
+export async function decodeBody(
+  coding: string,
+  body: Uint8Array,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  const DS = decompressionCtor();
+  const format = decompressionFormatFor(coding);
+  if (!DS || format === undefined) throw new Error(`undecodable Content-Encoding: ${coding}`);
+  const decoded = new Blob([body as unknown as BlobPart])
+    .stream()
+    .pipeThrough(new DS(format));
+  const reader = decoded.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`decoded body exceeds the ${maxBytes}-byte bundle cap`);
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out;
 }
 
 export type KpsHttpResponse = {
@@ -84,8 +171,10 @@ export async function fetchBundleOverKps(
   const stream = await openStream(addr);
   try {
     const certhash = addr.slice(addr.lastIndexOf(":") + 1);
+    // §4.2: advertise the codings this environment can decode.
+    const advertised = ambientCodings();
     const writer = stream.writable.getWriter();
-    await writer.write(buildKpsHttpRequest(path, certhash));
+    await writer.write(buildKpsHttpRequest(path, certhash, advertised));
     await writer.close(); // closeWrite: request is EOF-terminated
 
     // Read the whole EOF-delimited response, capped (headers + body; the
@@ -115,6 +204,17 @@ export async function fetchBundleOverKps(
     // §4.2: any status other than 200 fails this resolver; redirects are
     // never followed (alternative locations are additional resolver entries).
     if (resp.status !== 200) throw new Error(`HTTP ${resp.status}`);
+
+    // §4.2: a response may use exactly one coding the request advertised;
+    // anything else (unadvertised coding, or a list) fails this resolver.
+    // The cap is enforced on the DECODED bytes.
+    const coding = resp.headers.find(([n]) => n === "content-encoding")?.[1].toLowerCase();
+    if (coding && coding !== "identity") {
+      if (!advertised.includes(coding)) {
+        throw new Error(`unadvertised Content-Encoding: ${coding}`);
+      }
+      return decodeBody(coding, resp.body, maxBytes);
+    }
     if (resp.body.byteLength > maxBytes) {
       throw new Error(`body exceeds the ${maxBytes}-byte bundle cap`);
     }

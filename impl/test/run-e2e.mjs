@@ -13,6 +13,7 @@
 // Run: npm run test:e2e
 
 import { spawn } from "node:child_process";
+import { gzipSync } from "node:zlib";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { keccak_256 } from "@noble/hashes/sha3";
@@ -81,6 +82,7 @@ const TEST_ADDR = "0xabc0000000000000000000000000000000000001";
 const PT_ADDR = "0xabc0000000000000000000000000000000000002";
 const PT_KPS_ADDR = "0xabc0000000000000000000000000000000000003";
 const PT_KPS_BAD_ADDR = "0xabc0000000000000000000000000000000000004";
+const PT_KPS_GZ_ADDR = "0xabc0000000000000000000000000000000000005";
 
 async function main() {
   // 1. build all workspaces
@@ -128,6 +130,7 @@ async function main() {
     ptAddress: PT_ADDR,
     ptKpsAddress: PT_KPS_ADDR,
     ptKpsBadAddress: PT_KPS_BAD_ADDR,
+    ptKpsGzAddress: PT_KPS_GZ_ADDR,
     kpsAddr,
     origin,
   };
@@ -235,10 +238,20 @@ async function main() {
       }
       ptKpsBad.close();
 
+      // §4.2 content coding: bundle served as Content-Encoding: gzip.
+      const ptKpsGz = new window.AnonRpcWorker({
+        address: cfg.ptKpsGzAddress,
+        preExisting: { rpcProvider: provider },
+      });
+      await ptKpsGz.ready;
+      const rgz = await ptKpsGz.fetch(`${cfg.origin}/hello`);
+      const ptKpsGzBody = await rgz.text();
+      ptKpsGz.close();
+
       return {
         sandbox, passthrough, echoed, sentPayload: payload, kpsRemote,
         echoedReq, echoedStream, abortName, afterAbort, callCount, configEcho,
-        ptBody, ptCountHeader, ptKpsBody, kpsBadBootError,
+        ptBody, ptCountHeader, ptKpsBody, kpsBadBootError, ptKpsGzBody,
       };
     },
     evalCfg,
@@ -278,12 +291,17 @@ async function main() {
   check(
     "every §4.2 failure mode was attempted in order against the kps server",
     kpsBundleRequests.join(" "),
-    "/missing.js /redirect.js /chunked.js /tampered.js /w.js /missing.js",
+    "/missing.js /redirect.js /chunked.js /tampered.js /badcoding.js /w.js /missing.js /gzip.js",
   );
   if (!/no resolver yielded bytes matching workerHash/.test(result.kpsBadBootError)) {
     fail(`kps-only failing resolvers: expected a diagnostic boot rejection, got: ${result.kpsBadBootError}`);
   }
   console.log("  ✓ boot rejects with diagnostics when every kps resolver fails");
+  check(
+    "gzip-encoded bundle advertised, decoded, and verified (§4.2)",
+    result.ptKpsGzBody,
+    `hello from ${origin}`,
+  );
 
   // Reload the page and start a fresh worker: the counter must continue —
   // this is what proves the store is IndexedDB, not per-page memory.
@@ -377,6 +395,7 @@ async function main() {
             `kps:${kpsBundleAddr}/redirect.js`,
             `kps:${kpsBundleAddr}/chunked.js`,
             `kps:${kpsBundleAddr}/tampered.js`,
+            `kps:${kpsBundleAddr}/badcoding.js`,
             `kps:${kpsBundleAddr}/w.js`,
           ])),
       },
@@ -385,6 +404,13 @@ async function main() {
         [selector("workerHash()")]: "0x" + toHex(keccak_256(ptWorkerBytes)),
         [selector("workerResolvers()")]:
           "0x" + toHex(encodeStringArray([`kps:${kpsBundleAddr}/missing.js`])),
+      },
+      // §4.2 content coding: the bundle arrives gzipped and is decoded before
+      // the hash check (the route 500s unless gzip was advertised).
+      [PT_KPS_GZ_ADDR]: {
+        [selector("workerHash()")]: "0x" + toHex(keccak_256(ptWorkerBytes)),
+        [selector("workerResolvers()")]:
+          "0x" + toHex(encodeStringArray([`kps:${kpsBundleAddr}/gzip.js`])),
       },
     };
     return { origin, ethCallMap, port };
@@ -460,6 +486,10 @@ async function startKpsServer() {
 //   /chunked.js  → 200 + Transfer-Encoding header + the PINNED bytes — only
 //                  the §4.2 abandon rule stops this one from succeeding
 //   /redirect.js → 301 + Location (redirects must never be followed)
+//   /badcoding.js→ 200 + an UNADVERTISED Content-Encoding + the pinned bytes
+//                  (§4.2: only advertised codings may be used)
+//   /gzip.js     → 200 + Content-Encoding: gzip + gzipped pinned bytes; 500
+//                  unless the request advertised gzip in Accept-Encoding
 // Requests are recorded (in order) for the caller to assert on.
 async function startKpsBundleServer(bundleBytes) {
   const port = 20000 + Math.floor(Math.random() * 20000);
@@ -516,6 +546,18 @@ async function startKpsBundleServer(bundleBytes) {
 
     if (path === "/w.js") {
       await send(`HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\nContent-Length: ${bundleBytes.length}\r\n\r\n`, bundleBytes);
+    } else if (path === "/gzip.js") {
+      // §4.2: a server may only use a coding the request advertised — enforce
+      // that here so the e2e also proves the harness SENT Accept-Encoding.
+      const advertised = /\r\nAccept-Encoding: ([^\r]*)/i.exec(req)?.[1] ?? "";
+      if (!advertised.split(/,\s*/).includes("gzip")) {
+        await send("HTTP/1.1 500 Internal Server Error\r\n\r\n", Buffer.from("gzip not advertised"));
+      } else {
+        const gz = gzipSync(bundleBytes);
+        await send(`HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\nContent-Encoding: gzip\r\nContent-Length: ${gz.length}\r\n\r\n`, gz);
+      }
+    } else if (path === "/badcoding.js") {
+      await send(`HTTP/1.1 200 OK\r\nContent-Encoding: x-magic\r\n\r\n`, bundleBytes);
     } else if (path === "/tampered.js") {
       const evil = Buffer.concat([Buffer.from("//evil\n"), bundleBytes]);
       await send(`HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\n\r\n`, evil);
