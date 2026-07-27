@@ -4,6 +4,10 @@ A browser harness for [anon-rpc](https://github.com/privacy-ethereum/anon-rpc)
 — a standard that lets a wallet or application make **anonymized RPC requests**
 by running untrusted, hash-pinned anon-client code inside a sandboxed worker.
 
+Implements the [anon-rpc specification](https://privacy-ethereum.github.io/anon-rpc/spec/)
+version **0.2.1**. (The package version is kept `>=` the implemented spec
+version; a package release without a spec change bumps past it.)
+
 The harness:
 
 - resolves the anon-client bundle from an on-chain specifier contract — over
