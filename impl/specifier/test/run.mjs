@@ -145,6 +145,11 @@ console.log("github-resolver tests");
 try {
   execSync("forge --version", { stdio: "ignore" });
 } catch {
+  // In CI a skip would mask a broken foundry install as green: fail instead.
+  if (process.env.CI) {
+    console.error("❌ foundry is required in CI (forge not found)");
+    process.exit(1);
+  }
   console.log("⚠ foundry not installed — skipping contract/publish tests (https://getfoundry.sh)");
   process.exit(0);
 }

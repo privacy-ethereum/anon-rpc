@@ -28,6 +28,8 @@ const ok = (m) => console.log("  ✓ " + m);
 try {
   execSync("anvil --version", { stdio: "ignore" });
 } catch {
+  // In CI a skip would mask a broken foundry install as green: fail instead.
+  if (process.env.CI) fail("foundry is required in CI (anvil not found)");
   console.log("⚠ foundry not installed — skipping site smoke test (https://getfoundry.sh)");
   process.exit(0);
 }
