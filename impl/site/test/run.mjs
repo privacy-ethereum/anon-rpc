@@ -139,6 +139,15 @@ cleanups.push(() => browser.close());
 const page = await browser.newPage();
 page.on("pageerror", (e) => console.log("  [page:error]", e.message));
 
+// Hermetic: only local servers are reachable. The page otherwise loads Google
+// Fonts (whose late swap reflows the layout — which made a CI click miss the
+// copy button) and probes live public RPC endpoints; a CI test must depend on
+// neither.
+await page.route("**/*", (route) => {
+  const host = new URL(route.request().url()).hostname;
+  return host === "127.0.0.1" || host === "localhost" ? route.continue() : route.abort();
+});
+
 await page.goto(`${siteUrl}/demo/`);
 
 // Fresh visit: watch address prefills with the beacon deposit contract.
@@ -149,7 +158,12 @@ ok("watch address prefilled with the default");
 
 await page.fill("#bootstrap", rpc);
 await page.click("#copy");
-if ((await page.inputValue("#worker-rpc")) !== rpc) fail("copy button didn't copy the bootstrap URL");
+{
+  const got = await page.inputValue("#worker-rpc");
+  if (got !== rpc) {
+    fail(`copy button didn't copy the bootstrap URL (worker-rpc: ${JSON.stringify(got)}, bootstrap: ${JSON.stringify(await page.inputValue("#bootstrap"))})`);
+  }
+}
 ok("copy button fills worker RPC from bootstrap");
 await page.fill("#specifier", specifier);
 await page.fill("#watch", WATCH);
