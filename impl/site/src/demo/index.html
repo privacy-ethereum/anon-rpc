@@ -79,6 +79,38 @@
 
     input:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    /* Inherit the input treatment so the preset picker doesn't read as a
+       different kind of control; only the affordances differ. */
+    select {
+      width: 100%;
+      padding: 11px 13px;
+      font-family: var(--sans);
+      font-size: 0.88rem;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    select:focus {
+      border-color: var(--violet);
+      box-shadow: 0 0 0 3px rgba(157, 123, 255, 0.18);
+    }
+
+    select:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .field-note {
+      margin: 6px 0 0;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      color: var(--text-muted);
+    }
+
+    .field-note.warn { color: var(--warn); }
+
     #copy { flex: none; padding: 10px 14px; font-size: 0.85rem; }
 
     #toggle { width: 100%; padding: 12px; }
@@ -176,6 +208,11 @@
     <div class="card">
       <h2>Connection</h2>
       <div class="field">
+        <label for="preset"><span title="Prefills the specifier contract and any worker-specific config below" class="has-tip">Worker</span></label>
+        <select id="preset"></select>
+        <p class="field-note" id="preset-note"></p>
+      </div>
+      <div class="field">
         <label for="bootstrap"><span title="Used once, from this page, to read the specifier contract" class="has-tip">Bootstrap RPC URL</span></label>
         <input id="bootstrap" placeholder="https://ethereum-rpc.publicnode.com" spellcheck="false" />
       </div>
@@ -189,6 +226,11 @@
       <div class="field">
         <label for="specifier"><span title="The on-chain IWorkerSpecifier pinning the worker bundle by keccak256" class="has-tip">Specifier contract</span></label>
         <input id="specifier" placeholder="0x…" spellcheck="false" />
+      </div>
+      <div class="field" id="gateway-field">
+        <label for="gateway"><span title="Passed to the worker as config.gateways — the KPS address it tunnels Tor traffic through" class="has-tip">Gateway KPS address</span></label>
+        <input id="gateway" placeholder="ip:port:certhash" spellcheck="false" />
+        <p class="field-note warn" id="gateway-note"></p>
       </div>
     </div>
 

@@ -6,10 +6,69 @@ import { AnonRpcWorker } from "@anon-rpc/browser-harness";
 
 const SETTINGS_KEY = "anon-rpc-demo-settings";
 const POLL_MS = 12_000; // ~mainnet block time
-// The passthrough worker published on mainnet (editable below).
-const DEFAULT_SPECIFIER = "0x4fd77be300f31c5fe6ab266d35d27750a3478d27";
 // The beacon deposit contract: a huge balance that changes constantly.
 const DEFAULT_WATCH = "0x00000000219ab540356cBB839Cbe05303d7705Fa";
+
+/* --- worker presets --- */
+
+// Workers published on mainnet. A preset only prefills the fields below; any
+// specifier address can be pasted in by hand, which switches the picker to
+// "custom".
+//
+// `gateway` is worker-specific config (§7.1), delivered as
+// `config: { gateways: [...] }`. `undefined` means the worker takes no config,
+// and the field is hidden for it.
+type Preset = {
+  id: string;
+  label: string;
+  specifier: string;
+  gateway?: string;
+  note?: string;
+  gatewayNote?: string;
+};
+
+// tor-js's public gateway. Demonstration only — see the note below; anything
+// real should run its own (https://github.com/privacy-ethereum/tor-js).
+const TORJS_DEMO_GATEWAY =
+  "170.64.236.147:12298:uEiBHwUMNRTetrbqScahm81Di57Xv2OphNrx-CurJGOq3ww";
+
+const PRESETS: Preset[] = [
+  {
+    id: "passthrough",
+    label: "Passthrough — plain fetch (no anonymization)",
+    specifier: "0x4fd77be300f31c5fe6ab266d35d27750a3478d27",
+    note:
+      "The minimal reference worker: it fulfils calls with an ordinary fetch, so " +
+      "requests are not anonymized. It demonstrates the sandbox and hash pinning, " +
+      "not privacy.",
+  },
+  {
+    id: "tor-js",
+    label: "tor-js — fetch over Tor",
+    specifier: "0x700dA3193D35fA54Cd3fBf29B66f2a2A0385659e",
+    gateway: TORJS_DEMO_GATEWAY,
+    note:
+      "Runs a full Tor client compiled to WebAssembly inside the sandbox, building " +
+      "circuits in the browser. Expect ~15–30 s to bootstrap before the first " +
+      "balance arrives, and slower polls thereafter.",
+    gatewayNote:
+      "Demonstration gateway only: limited capacity, and it may disappear at any " +
+      "time. Browsers cannot open raw TCP, so a gateway relays already-encrypted " +
+      "Tor traffic — run your own for anything real.",
+  },
+  {
+    id: "custom",
+    label: "Custom — paste a specifier",
+    specifier: "",
+    gateway: "",
+    note: "Any IWorkerSpecifier address. Supply a gateway only if that worker expects one.",
+  },
+];
+
+const CUSTOM = PRESETS[PRESETS.length - 1];
+const presetById = (id: string): Preset => PRESETS.find((p) => p.id === id) ?? CUSTOM;
+const presetBySpecifier = (addr: string): Preset | undefined =>
+  PRESETS.find((p) => p.specifier && p.specifier.toLowerCase() === addr.toLowerCase());
 // Probed in order on first visit to prefill the RPC fields (all mainnet,
 // CORS-open). Availability shifts, hence the probe rather than a hardcode.
 const PUBLIC_RPCS = [
@@ -21,10 +80,15 @@ const PUBLIC_RPCS = [
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const els = {
+  preset: $<HTMLSelectElement>("preset"),
+  presetNote: $<HTMLParagraphElement>("preset-note"),
   bootstrap: $<HTMLInputElement>("bootstrap"),
   workerRpc: $<HTMLInputElement>("worker-rpc"),
   copy: $<HTMLButtonElement>("copy"),
   specifier: $<HTMLInputElement>("specifier"),
+  gateway: $<HTMLInputElement>("gateway"),
+  gatewayField: $<HTMLDivElement>("gateway-field"),
+  gatewayNote: $<HTMLParagraphElement>("gateway-note"),
   watch: $<HTMLInputElement>("watch"),
   toggle: $<HTMLButtonElement>("toggle"),
   pill: $<HTMLSpanElement>("pill"),
@@ -37,8 +101,19 @@ const els = {
 
 /* --- settings persistence --- */
 
-type Settings = { bootstrap: string; workerRpc: string; specifier: string; watch: string };
-const fields: (keyof Settings)[] = ["bootstrap", "workerRpc", "specifier", "watch"];
+type Settings = {
+  bootstrap: string;
+  workerRpc: string;
+  specifier: string;
+  gateway: string;
+  watch: string;
+  // Which preset the picker shows. Persisted but not one of `fields` below: it
+  // backs a <select>, and the specifier address is what actually decides it.
+  preset?: string;
+};
+// The text inputs, in the order they appear. Driven generically for prefill and
+// for disabling while the watcher runs.
+const fields = ["bootstrap", "workerRpc", "specifier", "gateway", "watch"] as const;
 
 function readSaved(): Partial<Settings> {
   try {
@@ -52,16 +127,70 @@ function persist(patch: Partial<Settings>): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...readSaved(), ...patch }));
 }
 
+/* --- preset picker --- */
+
+for (const p of PRESETS) {
+  const opt = document.createElement("option");
+  opt.value = p.id;
+  opt.textContent = p.label;
+  els.preset.append(opt);
+}
+
+/** Show the note and gateway row that match the selected preset. */
+function renderPreset(p: Preset): void {
+  els.presetNote.textContent = p.note ?? "";
+  // A preset with no `gateway` key describes a worker that takes no config.
+  const takesGateway = p.gateway !== undefined;
+  els.gatewayField.style.display = takesGateway ? "" : "none";
+  els.gatewayNote.textContent = takesGateway ? (p.gatewayNote ?? "") : "";
+}
+
+/** Adopt a preset: fill the fields it prescribes, then re-render. */
+function applyPreset(p: Preset): void {
+  if (p.specifier) {
+    els.specifier.value = p.specifier;
+    persist({ specifier: p.specifier });
+  }
+  if (p.gateway !== undefined) {
+    els.gateway.value = p.gateway;
+    persist({ gateway: p.gateway });
+  }
+  persist({ preset: p.id });
+  renderPreset(p);
+}
+
 const saved = readSaved();
 for (const f of fields) els[f].value = saved[f] ?? "";
-if (!els.specifier.value) els.specifier.value = DEFAULT_SPECIFIER;
 if (!els.watch.value) els.watch.value = DEFAULT_WATCH;
 
-// Specifier and watch address persist as typed. The RPC URLs deliberately do
-// NOT: they are only saved once proven — bootstrap when a worker boots
-// through it, worker RPC when a balance query succeeds — so a typo never
-// becomes the sticky default.
-els.specifier.addEventListener("input", () => persist({ specifier: els.specifier.value.trim() }));
+// The specifier address is the source of truth for which preset is showing: a
+// pasted address that matches a known one selects it, anything else is custom.
+// That keeps the picker honest when settings are restored or hand-edited.
+const initial = els.specifier.value
+  ? (presetBySpecifier(els.specifier.value) ?? CUSTOM)
+  : presetById(saved.preset ?? PRESETS[0].id);
+els.preset.value = initial.id;
+if (!els.specifier.value) applyPreset(initial);
+else renderPreset(initial);
+
+els.preset.addEventListener("change", () => applyPreset(presetById(els.preset.value)));
+
+// Specifier, gateway and watch address persist as typed. The RPC URLs
+// deliberately do NOT: they are only saved once proven — bootstrap when a
+// worker boots through it, worker RPC when a balance query succeeds — so a typo
+// never becomes the sticky default.
+els.specifier.addEventListener("input", () => {
+  const addr = els.specifier.value.trim();
+  persist({ specifier: addr });
+  // Hand-editing away from a preset's address is a switch to custom.
+  const match = presetBySpecifier(addr) ?? CUSTOM;
+  if (match.id !== els.preset.value) {
+    els.preset.value = match.id;
+    persist({ preset: match.id });
+    renderPreset(match);
+  }
+});
+els.gateway.addEventListener("input", () => persist({ gateway: els.gateway.value.trim() }));
 els.watch.addEventListener("input", () => persist({ watch: els.watch.value.trim() }));
 
 els.copy.addEventListener("click", () => {
@@ -152,7 +281,22 @@ function validate(): Settings {
   if (!isUrl(s.workerRpc)) throw new Error("worker RPC URL must be http(s)");
   if (!isAddr(s.specifier)) throw new Error("specifier must be a 0x… address");
   if (!isAddr(s.watch)) throw new Error("watch address must be a 0x… address");
+  // Only checked when the shown preset takes one: a mistyped gateway would
+  // otherwise surface as an opaque worker startup failure.
+  const p = presetById(els.preset.value);
+  if (p.gateway !== undefined && s.gateway) {
+    if (!/^(\[[^\]]+\]|[^:]+):\d+:[^:]+$/.test(s.gateway)) {
+      throw new Error("gateway must be ip:port:certhash (IPv6 bracketed)");
+    }
+  }
   return s;
+}
+
+/** Worker-specific config (§7.1), or undefined when the worker takes none. */
+function workerConfig(s: Settings): unknown {
+  const p = presetById(els.preset.value);
+  if (p.gateway === undefined || !s.gateway) return undefined;
+  return { gateways: [s.gateway] };
 }
 
 async function tick(s: Settings): Promise<void> {
@@ -212,6 +356,7 @@ async function start(): Promise<void> {
   els.toggle.textContent = "Stop";
   for (const f of fields) els[f].disabled = true;
   els.copy.disabled = true;
+  els.preset.disabled = true;
   lastBalance = undefined;
   els.delta.textContent = "";
   els.delta.className = "";
@@ -220,6 +365,7 @@ async function start(): Promise<void> {
   const bootstrapCall = jsonRpc(fetch, s.bootstrap);
   worker = new AnonRpcWorker({
     address: s.specifier,
+    config: workerConfig(s),
     preExisting: {
       rpcProvider: {
         request: ({ method, params }) => bootstrapCall(method, (params as unknown[]) ?? []),
@@ -255,6 +401,7 @@ function stop(keepStatus = false): void {
   els.toggle.textContent = "Start watching";
   for (const f of fields) els[f].disabled = false;
   els.copy.disabled = false;
+  els.preset.disabled = false;
   if (!keepStatus) setStatus("idle", "");
 }
 
